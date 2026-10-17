@@ -1,0 +1,2 @@
+{"target": "https://suspicious-refund.example/claim?ref=sms#/step/2", "source_ref": "COMPLAINT-2026-0001", "case_ref": "CASE-114", "priority": 50, "urgent": true}
+{"target": "login.fake-bank.example", "kind": "domain", "source_ref": "COMPLAINT-2026-0002", "case_ref": "CASE-114", "required_artifacts": ["screenshot_viewport", "rendered_dom", "rendered_text", "network_events", "har", "manifest", "screenshot_full_or_tiles"]}

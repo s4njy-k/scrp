@@ -1,0 +1,267 @@
+# Cybercrime web collection — isolated Compose project (blueprint §5, §13).
+#
+#   docker --context rootless compose -p cyber-web-collector config
+#   docker --context rootless compose -p cyber-web-collector build
+#   docker --context rootless compose -p cyber-web-collector up -d --scale browser-worker=1
+#
+# Network topology (no service publishes a port on the host):
+#
+#   egress (bridge, Internet) ── egress-gateway ── acquisition (internal) ── browser-engine
+#                                      │                    │
+#                                      │                    └── browser-worker (driver; no listener)
+#                                      └── triage (internal) ── coordinator          │
+#                                                                   │                │
+#                                                   control (internal) ── postgres ──┘
+#
+#  * browser-engine reaches the Internet only through the gateway and has no
+#    database credentials or control-network route.
+#  * The gateway is the only container on a non-internal network.
+#  * PostgreSQL is reachable only on the control network.
+#
+# Resource envelope (proposed caps for evaluation, not measured requirements):
+# aggregate ~2.0 vCPU and 9.75 GiB memory ceilings across the five services.
+# Rootless cgroup limits only take effect with cgroup v2 delegation of the
+# cpu/memory/pids controllers - verify with scripts/preflight.sh.
+
+name: cyber-web-collector
+
+x-logging: &bounded-logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-hardening: &hardening
+  init: true
+  restart: unless-stopped
+  logging: *bounded-logs
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  ipc: private
+
+x-db-env: &db-env
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGUSER: collector
+  PGDATABASE: collector
+  PGPASSWORD_FILE: /run/secrets/collector_db_password
+
+services:
+  postgres:
+    <<: *hardening
+    image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+    # The official entrypoint needs to chown/setuid on first start.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser_password
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=40
+      - -c
+      - idle_in_transaction_session_timeout=60s
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=off
+    secrets: [postgres_superuser_password, collector_db_password, scrapling_db_password]
+    volumes:
+      - ${COLLECTOR_DATA_DIR:?set COLLECTOR_DATA_DIR in .env}/postgres:/var/lib/postgresql/data
+      - ./docker/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+    networks: [control]
+    shm_size: 256m
+    cpus: 0.3
+    mem_limit: 1536m
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d collector"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  egress-gateway:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+    image: cyber-web-collector/app:${APP_VERSION:-0.1.0}
+    command: ["serve", "gateway"]
+    read_only: true
+    environment:
+      COLLECTOR_ROLE: gateway
+      GATEWAY_PORT: "3128"
+      GATEWAY_ALLOWED_PORTS: ${GATEWAY_ALLOWED_PORTS:-80,443}
+      GATEWAY_EXTRA_DENY_CIDRS: ${GATEWAY_EXTRA_DENY_CIDRS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    networks: [egress, acquisition, triage]
+    cpus: 0.1
+    mem_limit: 512m
+    pids_limit: 100
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3128/__health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  browser-engine:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: docker/browser-engine.Dockerfile
+    image: cyber-web-collector/browser-engine:${APP_VERSION:-0.1.0}
+    environment:
+      BROWSER_SERVER_PATH: ${BROWSER_SERVER_PATH:?set BROWSER_SERVER_PATH in .env (random >=24 chars)}
+      BROWSER_MAX_CLIENTS: "4"
+    # Tested browser-compatible seccomp profile (Playwright's profile: Docker default
+    # plus user-namespace syscalls for Chromium's own sandbox). Never SYS_ADMIN/host IPC.
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/seccomp/chromium-seccomp.json
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+      - /home/pwuser:size=512m,uid=1001,gid=1001
+    shm_size: 1g
+    networks: [acquisition]
+    cpus: 1.2
+    mem_limit: 5632m
+    pids_limit: 1024
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  coordinator:
+    <<: *hardening
+    image: cyber-web-collector/app:${APP_VERSION:-0.1.0}
+    command: ["serve", "coordinator"]
+    read_only: true
+    depends_on:
+      postgres: { condition: service_healthy }
+      egress-gateway: { condition: service_started }
+    environment:
+      <<: *db-env
+      COLLECTOR_ROLE: coordinator
+      EGRESS_PROXY_URL: http://egress-gateway:3128
+      EGRESS_VANTAGE_LABEL: ${EGRESS_VANTAGE_LABEL:-vm-public-ip-via-local-gateway}
+      MIGRATE_ON_START: "true"
+      RETENTION_DELETE_ENABLED: ${RETENTION_DELETE_ENABLED:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OMP_THREAD_LIMIT: "1"
+    secrets: [collector_db_password]
+    volumes:
+      - ${COLLECTOR_DATA_DIR}/artifacts:/data/artifacts
+      - ${COLLECTOR_DATA_DIR}/input:/input:ro
+      - ./config/policy.yaml:/app/config/policy.yaml:ro
+    tmpfs:
+      - /tmp:size=256m
+    networks: [control, triage]
+    cpus: 0.3
+    mem_limit: 1536m
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD", "node", "dist/cli.js", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  browser-worker:
+    <<: *hardening
+    image: cyber-web-collector/app:${APP_VERSION:-0.1.0}
+    command: ["serve", "browser-worker"]
+    read_only: true
+    depends_on:
+      postgres: { condition: service_healthy }
+      browser-engine: { condition: service_healthy }
+      coordinator: { condition: service_started }
+    environment:
+      <<: *db-env
+      COLLECTOR_ROLE: browser-worker
+      BROWSER_MODE: connect
+      BROWSER_WS_ENDPOINT: ws://browser-engine:3000/${BROWSER_SERVER_PATH}
+      EGRESS_PROXY_URL: http://egress-gateway:3128
+      EGRESS_VANTAGE_LABEL: ${EGRESS_VANTAGE_LABEL:-vm-public-ip-via-local-gateway}
+      WORKER_MEMORY_MBYTES: "768"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    secrets: [collector_db_password]
+    volumes:
+      - ${COLLECTOR_DATA_DIR}/artifacts:/data/artifacts
+      - ./config/policy.yaml:/app/config/policy.yaml:ro
+    tmpfs:
+      - /tmp:size=256m
+    # Driver joins both networks to open the private browser-control connection;
+    # it has no listener reachable from pages (health binds loopback) and does not route.
+    networks: [control, acquisition]
+    cpus: 0.1
+    mem_limit: 768m
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD", "node", "dist/cli.js", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional alternate adapter. Disabled unless started with --profile scrapling AND
+  # policy browser.alternate_engine: scrapling. Shares the acquisition envelope: it
+  # takes at most one global browser permit (alternate_browser_slots_max) and must be
+  # given capacity by reducing other caps, not added on top.
+  # WEAKER BOUNDARY: its browser runs inside this container (see docs/security.md).
+  scrapling-worker:
+    <<: *hardening
+    profiles: [scrapling]
+    build:
+      context: .
+      dockerfile: scrapling-worker/Dockerfile
+    image: cyber-web-collector/scrapling-worker:${APP_VERSION:-0.1.0}
+    read_only: true
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: collector_scrapling
+      PGDATABASE: collector
+      PGPASSWORD_FILE: /run/secrets/scrapling_db_password
+      EGRESS_PROXY_URL: http://egress-gateway:3128
+      EGRESS_VANTAGE_LABEL: ${EGRESS_VANTAGE_LABEL:-vm-public-ip-via-local-gateway}
+      ARTIFACT_ROOT: /data/artifacts
+      COLLECTOR_POLICY_PATH: /app/config/policy.yaml
+    secrets: [scrapling_db_password]
+    volumes:
+      - ${COLLECTOR_DATA_DIR}/artifacts:/data/artifacts
+      - ./config/policy.yaml:/app/config/policy.yaml:ro
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/seccomp/chromium-seccomp.json
+    shm_size: 512m
+    networks: [control, acquisition]
+    cpus: 0.6
+    mem_limit: 2048m
+    pids_limit: 512
+
+networks:
+  control:
+    internal: true
+  acquisition:
+    internal: true
+  triage:
+    internal: true
+  egress:
+    driver: bridge
+
+secrets:
+  postgres_superuser_password:
+    file: ${COLLECTOR_SECRETS_DIR:-./secrets}/postgres_superuser_password
+  collector_db_password:
+    file: ${COLLECTOR_SECRETS_DIR:-./secrets}/collector_db_password
+  scrapling_db_password:
+    file: ${COLLECTOR_SECRETS_DIR:-./secrets}/scrapling_db_password

@@ -1,0 +1,9 @@
+{
+  "name": "cyber-web-collector-browser-engine",
+  "private": true,
+  "description": "Pinned Playwright server for the private browser-engine container. Must match playwright-core in the root package-lock.json.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}

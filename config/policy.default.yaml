@@ -1,0 +1,112 @@
+# Collector application policy (blueprint §14).
+#
+# This file is validated by src/config/policy.ts (JSON Schema: config/policy.schema.json).
+# It is the collector's own policy, NOT upstream Crawlee/Playwright/Scrapling options;
+# each value is mapped explicitly by the code that consumes it.
+#
+# The first five sections are the blueprint's values unchanged. The sections after
+# `queue` derive the request/resource/redirect/event-count bounds and engine settings
+# the blueprint requires to be validated before deployment. All values are proposed
+# starting points for evaluation on the real VM, not measured requirements.
+schema_version: 1
+project: cyber-web-collector
+profile: browser_evidence
+external_providers_enabled: false
+ai_required_for_collection: false
+limits:
+  browser_slots_global: 2
+  alternate_browser_slots_max: 1
+  http_concurrency_global: 8
+  top_level_concurrency_per_domain: 1
+  per_domain_delay_seconds: 3
+  http_attempts_max: 2
+  browser_attempts_max: 2
+  acquisition_attempts_max: 4
+  active_acquisition_seconds_max: 180
+  http_attempt_seconds: 15
+  primary_browser_seconds: 60
+  alternate_browser_seconds: 90
+  finalisation_reserve_seconds: 15
+  child_pages_per_target_max: 2
+capture:
+  viewport: {width: 1440, height: 1000}
+  device_scale_factor: 1
+  original_format: png
+  original_service_workers: allow
+  block_ads: false
+  suppress_render_resources: false
+  full_image_megapixels_max: 20
+  scroll_tiles_max: 6
+  individual_text_body_mib_max: 5
+  attempt_artifacts_mib_max: 50
+storage:
+  captures_gb_soft_limit: 80
+  host_free_gb_pause_below: 30
+  host_free_gb_resume_above: 40
+  delete_case_hold_artifacts: false
+queue:
+  heartbeat_seconds: 10
+  lease_seconds: 120
+  reclaim_expired_leases: true
+
+# ---- Extensions (derived bounds and explicit library mappings) ----
+scope:
+  allowed_schemes: [https, http]
+  # Nonstandard public ports are an explicit policy case: add them here AND to
+  # GATEWAY_ALLOWED_PORTS, otherwise the importer rejects the URL with a recorded reason.
+  allowed_ports: [80, 443]
+  # Domain-only seeds generate one tracked candidate per scheme, tried in this order.
+  domain_seed_schemes: [https, http]
+  allow_ip_literals: true
+  reject_userinfo_urls: true
+  follow_external_redirects: true
+  max_redirects: 10
+bounds:
+  max_network_events_per_attempt: 20000
+  max_requests_per_attempt: 5000
+  max_websocket_frames_per_attempt: 2000
+  max_websocket_frame_bytes_retained: 65536
+  max_frames_per_page: 50
+  max_popups_per_attempt: 5
+  max_page_steps: 5
+  max_dom_snapshot_mib: 10
+  max_image_decode_megapixels: 40
+  max_element_captures: 20
+  max_scroll_steps: 20
+  max_console_messages: 500
+http:
+  # Fixed per deployment and recorded with every attempt. Not rotated per request.
+  user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+  accept_language: "en-IN,en;q=0.9"
+browser:
+  primary_engine: chromium
+  # Chromium rendering incompatibility gets ONE alternate attempt with this engine.
+  alternate_engine: firefox
+  chromium_channel: chromium
+  # null = use the engine's own user agent (recorded per attempt).
+  user_agent: null
+  locale: en-IN
+  timezone: Asia/Kolkata
+  navigation_timeout_seconds: 30
+  readiness_max_seconds: 12
+  readiness_quiet_ms: 1000
+  challenge_wait_seconds: 15
+  scroll_step_wait_ms: 350
+  body_resource_types: [document, xhr, fetch, eventsource, script]
+  recycle_after_jobs: 50
+  recycle_after_minutes: 60
+  recycle_above_rss_mib: 3500
+extraction:
+  qr_enabled: true
+  ocr_enabled: true
+  ocr_concurrency: 1
+  ocr_timeout_seconds: 60
+  ocr_max_crops_per_attempt: 8
+  ai_enabled: false
+retention:
+  # Days before routine expiry; null = never expires automatically. Case holds always win.
+  classes:
+    standard: 30
+    extended: 180
+    permanent: null
+  default_class: standard

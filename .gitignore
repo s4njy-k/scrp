@@ -218,3 +218,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- cyber-web-collector ----
+node_modules/
+.env
+secrets/*
+!secrets/.gitkeep
+config/policy.yaml
+data/
+.pw-browsers/
+ci-secrets/
+*.dump

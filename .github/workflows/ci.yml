@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+        env:
+          POSTGRES_USER: collector
+          POSTGRES_PASSWORD: ci-only-not-secret
+          POSTGRES_DB: collector_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U collector" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://collector:ci-only-not-secret@127.0.0.1:5432/collector_test
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+      # Ubuntu 24.04 runners restrict unprivileged user namespaces (AppArmor), so the in-process
+      # fixture browser runs unsandboxed here; every attempt records chromium_sandbox=false.
+      # Production uses the separate sandboxed browser-engine container.
+      CHROMIUM_SANDBOX: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+      - run: npm ci
+      - name: Install the Chromium build matching playwright-core 1.56.1
+        run: npx playwright-core install --with-deps chromium
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Policy validates and schema is current
+        run: |
+          node dist/cli.js validate-policy > /dev/null
+          npm run schema && git diff --exit-code config/policy.schema.json
+      - run: npm test
+      - name: Scrapling adapter contract tests
+        run: python3 -I scrapling-worker/tests/test_contract.py -v
+      - name: Compose file validates
+        run: |
+          mkdir -p ci-secrets && for n in postgres_superuser_password collector_db_password scrapling_db_password; do echo ci > ci-secrets/$n; done
+          cp config/policy.default.yaml config/policy.yaml
+          COLLECTOR_DATA_DIR=/tmp/cwc BROWSER_SERVER_PATH=ci0123456789abcdef0123456789 COLLECTOR_SECRETS_DIR=$PWD/ci-secrets \
+            docker compose -p cyber-web-collector --profile scrapling config --quiet
+      - name: Shell scripts parse
+        run: for f in scripts/*.sh docker/browser-engine/start.sh docker/postgres/init-roles.sh; do bash -n "$f"; done

@@ -1,0 +1,7 @@
+# Direct dependencies of the optional Scrapling adapter (BSD-3-Clause).
+# requirements.lock is generated from this file; see README section "Scrapling adapter".
+scrapling[fetchers]==0.4.15
+playwright==1.63.0
+patchright==1.63.0
+psycopg[binary]==3.3.6
+PyYAML==6.0.3
