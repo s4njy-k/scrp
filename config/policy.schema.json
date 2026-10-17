@@ -1,0 +1,597 @@
+{
+  "$id": "https://cyber-web-collector.invalid/policy.schema.json",
+  "title": "cyber-web-collector policy (schema_version 1)",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "project": {
+      "type": "string",
+      "const": "cyber-web-collector"
+    },
+    "profile": {
+      "type": "string",
+      "enum": [
+        "data_triage",
+        "browser_evidence"
+      ]
+    },
+    "external_providers_enabled": {
+      "type": "boolean"
+    },
+    "ai_required_for_collection": {
+      "type": "boolean",
+      "const": false
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "browser_slots_global": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 8
+        },
+        "alternate_browser_slots_max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "http_concurrency_global": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 64
+        },
+        "top_level_concurrency_per_domain": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "per_domain_delay_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "http_attempts_max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "browser_attempts_max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "acquisition_attempts_max": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "active_acquisition_seconds_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "http_attempt_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "primary_browser_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "alternate_browser_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "finalisation_reserve_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "child_pages_per_target_max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "browser_slots_global",
+        "alternate_browser_slots_max",
+        "http_concurrency_global",
+        "top_level_concurrency_per_domain",
+        "per_domain_delay_seconds",
+        "http_attempts_max",
+        "browser_attempts_max",
+        "acquisition_attempts_max",
+        "active_acquisition_seconds_max",
+        "http_attempt_seconds",
+        "primary_browser_seconds",
+        "alternate_browser_seconds",
+        "finalisation_reserve_seconds",
+        "child_pages_per_target_max"
+      ],
+      "additionalProperties": false
+    },
+    "capture": {
+      "type": "object",
+      "properties": {
+        "viewport": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 7680
+            },
+            "height": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 4320
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ],
+          "additionalProperties": false
+        },
+        "device_scale_factor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 4
+        },
+        "original_format": {
+          "type": "string",
+          "const": "png"
+        },
+        "original_service_workers": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "block"
+          ]
+        },
+        "block_ads": {
+          "type": "boolean"
+        },
+        "suppress_render_resources": {
+          "type": "boolean"
+        },
+        "full_image_megapixels_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "scroll_tiles_max": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "individual_text_body_mib_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "attempt_artifacts_mib_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "viewport",
+        "device_scale_factor",
+        "original_format",
+        "original_service_workers",
+        "block_ads",
+        "suppress_render_resources",
+        "full_image_megapixels_max",
+        "scroll_tiles_max",
+        "individual_text_body_mib_max",
+        "attempt_artifacts_mib_max"
+      ],
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "captures_gb_soft_limit": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "host_free_gb_pause_below": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "host_free_gb_resume_above": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "delete_case_hold_artifacts": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "required": [
+        "captures_gb_soft_limit",
+        "host_free_gb_pause_below",
+        "host_free_gb_resume_above",
+        "delete_case_hold_artifacts"
+      ],
+      "additionalProperties": false
+    },
+    "queue": {
+      "type": "object",
+      "properties": {
+        "heartbeat_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "lease_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "reclaim_expired_leases": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "heartbeat_seconds",
+        "lease_seconds",
+        "reclaim_expired_leases"
+      ],
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "allowed_schemes": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "http",
+              "https"
+            ]
+          }
+        },
+        "allowed_ports": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "domain_seed_schemes": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "https",
+              "http"
+            ]
+          }
+        },
+        "allow_ip_literals": {
+          "type": "boolean"
+        },
+        "reject_userinfo_urls": {
+          "type": "boolean",
+          "const": true
+        },
+        "follow_external_redirects": {
+          "type": "boolean"
+        },
+        "max_redirects": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 30
+        }
+      },
+      "required": [
+        "allowed_schemes",
+        "allowed_ports",
+        "domain_seed_schemes",
+        "allow_ip_literals",
+        "reject_userinfo_urls",
+        "follow_external_redirects",
+        "max_redirects"
+      ],
+      "additionalProperties": false
+    },
+    "bounds": {
+      "type": "object",
+      "properties": {
+        "max_network_events_per_attempt": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_requests_per_attempt": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_websocket_frames_per_attempt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_websocket_frame_bytes_retained": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_frames_per_page": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_popups_per_attempt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_page_steps": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_dom_snapshot_mib": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_image_decode_megapixels": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_element_captures": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_scroll_steps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_console_messages": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "max_network_events_per_attempt",
+        "max_requests_per_attempt",
+        "max_websocket_frames_per_attempt",
+        "max_websocket_frame_bytes_retained",
+        "max_frames_per_page",
+        "max_popups_per_attempt",
+        "max_page_steps",
+        "max_dom_snapshot_mib",
+        "max_image_decode_megapixels",
+        "max_element_captures",
+        "max_scroll_steps",
+        "max_console_messages"
+      ],
+      "additionalProperties": false
+    },
+    "http": {
+      "type": "object",
+      "properties": {
+        "user_agent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "accept_language": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "user_agent",
+        "accept_language"
+      ],
+      "additionalProperties": false
+    },
+    "browser": {
+      "type": "object",
+      "properties": {
+        "primary_engine": {
+          "type": "string",
+          "const": "chromium"
+        },
+        "alternate_engine": {
+          "type": "string",
+          "enum": [
+            "firefox",
+            "scrapling",
+            "none"
+          ]
+        },
+        "chromium_channel": {
+          "type": "string",
+          "enum": [
+            "chromium",
+            "chrome-headless-shell"
+          ]
+        },
+        "user_agent": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "locale": {
+          "type": "string",
+          "minLength": 2
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "navigation_timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "readiness_max_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "readiness_quiet_ms": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "challenge_wait_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "scroll_step_wait_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "body_resource_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "recycle_after_jobs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "recycle_after_minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "recycle_above_rss_mib": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "primary_engine",
+        "alternate_engine",
+        "chromium_channel",
+        "user_agent",
+        "locale",
+        "timezone",
+        "navigation_timeout_seconds",
+        "readiness_max_seconds",
+        "readiness_quiet_ms",
+        "challenge_wait_seconds",
+        "scroll_step_wait_ms",
+        "body_resource_types",
+        "recycle_after_jobs",
+        "recycle_after_minutes",
+        "recycle_above_rss_mib"
+      ],
+      "additionalProperties": false
+    },
+    "extraction": {
+      "type": "object",
+      "properties": {
+        "qr_enabled": {
+          "type": "boolean"
+        },
+        "ocr_enabled": {
+          "type": "boolean"
+        },
+        "ocr_concurrency": {
+          "type": "number",
+          "const": 1
+        },
+        "ocr_timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "ocr_max_crops_per_attempt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ai_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean",
+              "const": false
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "required": [
+        "qr_enabled",
+        "ocr_enabled",
+        "ocr_concurrency",
+        "ocr_timeout_seconds",
+        "ocr_max_crops_per_attempt",
+        "ai_enabled"
+      ],
+      "additionalProperties": false
+    },
+    "retention": {
+      "type": "object",
+      "properties": {
+        "classes": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "default_class": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "classes",
+        "default_class"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "project",
+    "profile",
+    "external_providers_enabled",
+    "ai_required_for_collection",
+    "limits",
+    "capture",
+    "storage",
+    "queue",
+    "scope",
+    "bounds",
+    "http",
+    "browser",
+    "extraction",
+    "retention"
+  ],
+  "additionalProperties": false
+}

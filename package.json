@@ -1,0 +1,44 @@
+{
+  "name": "cyber-web-collector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evidence-grade cybercrime web collection: Crawlee + Playwright acquisition, PostgreSQL job ledger, controlled egress gateway and immutable artifact store.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19 <23"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "schema": "tsx scripts/emit-policy-schema.ts",
+    "cli": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@crawlee/core": "3.18.2",
+    "commander": "15.0.0",
+    "csv-parse": "7.0.3",
+    "ipaddr.js": "2.5.0",
+    "jsqr": "1.4.0",
+    "pg": "8.23.1",
+    "pino": "10.3.1",
+    "playwright-core": "1.56.1",
+    "pngjs": "7.0.0",
+    "tldts": "7.4.16",
+    "undici": "8.11.2",
+    "yaml": "2.9.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "@types/pg": "8.23.1",
+    "@types/pngjs": "6.0.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

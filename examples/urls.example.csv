@@ -1,0 +1,4 @@
+target,kind,source_ref,case_ref,priority,urgent,profile,required_artifacts,allowed_interactions,retention_class
+https://suspicious-refund.example/claim?ref=sms&victim=8812#/step/2,url,COMPLAINT-2026-0001,CASE-114,50,true,browser_evidence,,scroll,extended
+login.fake-bank.example,domain,COMPLAINT-2026-0002,CASE-114,10,false,browser_evidence,,scroll,standard
+https://shop.example.net/,url,FEED-77,,0,false,data_triage,http_response_record,,standard

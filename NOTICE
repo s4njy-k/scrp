@@ -1,0 +1,14 @@
+cyber-web-collector
+Copyright (c) 2026 the cyber-web-collector authors.
+
+No licence for this project's own source code has been chosen yet (package.json:
+"UNLICENSED"). Until the owner selects one, all rights are reserved.
+
+This product bundles or depends on third-party software under their own licences.
+See THIRD_PARTY_NOTICES.md. Browser binaries (Chromium, Firefox) in the
+browser-engine and scrapling-worker images carry their own notices inside those
+images (mcr.microsoft.com/playwright and the Playwright browser downloads).
+
+docker/seccomp/chromium-seccomp.json is copied unmodified from the Playwright
+repository (microsoft/playwright, tag v1.56.1, utils/docker/seccomp_profile.json),
+Apache License 2.0.
