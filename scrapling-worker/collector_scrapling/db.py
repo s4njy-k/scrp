@@ -107,12 +107,14 @@ def commit(conn, lease_: dict[str, Any], manifest: dict[str, Any] | None, manife
            total_bytes: int, active_seconds: float, decision: dict[str, Any], error: str | None, retention_days: int | None) -> bool:
     job_id, token, attempt_id = lease_["job"]["id"], lease_["token"], lease_["attempt_id"]
     with conn.transaction(), conn.cursor() as cur:
+        # Lock order jobs -> attempts, identical to the TypeScript queue and reclaimer (no deadlock).
+        cur.execute("SELECT lease_token, state FROM jobs WHERE id = %s FOR UPDATE", (job_id,))
+        job = cur.fetchone()
         cur.execute("SELECT status FROM attempts WHERE id = %s FOR UPDATE", (attempt_id,))
         row = cur.fetchone()
         if row and row["status"] not in ("pending", "interrupted"):
             return row["status"] == "committed"
-        cur.execute(f"SELECT id FROM jobs WHERE id = %s AND lease_token = %s AND state IN {ACTIVE} FOR UPDATE", (job_id, token))
-        held = cur.fetchone() is not None
+        held = bool(job and job["lease_token"] == token and job["state"] in ("LEASED", "CAPTURING", "FINALISING"))
         status = "interrupted" if error else ("committed" if held else "committed_lease_lost")
         cur.execute("""UPDATE attempts SET status=%s, outcome=%s, classification=%s, error=%s, ended_at=now(), active_seconds=%s,
                          artifact_dir=%s, manifest_sha256=%s, total_bytes=%s, required_satisfied=%s, missing_required=%s,

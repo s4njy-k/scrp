@@ -40,7 +40,7 @@ export async function runCoordinator(pool: Pool, policy: Policy, root: string): 
     { role: 'coordinator', workerId, lastProgressAt: () => loopProgress },
     { role: 'http-triage', workerId: triage.workerId, lastProgressAt: () => triage.lastProgressAt },
   ];
-  startHealthServer(Number(process.env.HEALTH_PORT ?? 8081), sources, pool, 5 * 60_000);
+  const health = startHealthServer(Number(process.env.HEALTH_PORT ?? 8081), sources, pool, 5 * 60_000);
   startWatchdog(sources, 15 * 60_000);
 
   let stopping = false;
@@ -49,9 +49,10 @@ export async function runCoordinator(pool: Pool, policy: Policy, root: string): 
     const t = setInterval(() => {
       if (running || stopping) return;
       running = true;
-      fn().then(() => { loopProgress = Date.now(); })
-        .catch((err: Error) => logger.error({ task: name, err: err.message }, 'coordinator task failed'))
-        .finally(() => { running = false; });
+      // Progress means "the loop is alive", even when a task fails because the database
+      // is down: the watchdog must only restart a genuinely stalled process.
+      fn().catch((err: Error) => logger.error({ task: name, err: err.message }, 'coordinator task failed'))
+        .finally(() => { running = false; loopProgress = Date.now(); });
     }, ms);
     t.unref();
     return t;
@@ -85,6 +86,7 @@ export async function runCoordinator(pool: Pool, policy: Policy, root: string): 
           await pool.query(`UPDATE attempts SET extraction_state = 'failed' WHERE id = $1`, [a.id]);
         });
       } catch (err) {
+        loopProgress = Date.now();
         logger.error({ err: (err as Error).message }, 'extraction loop error (database?)');
         await new Promise((r) => setTimeout(r, 5000));
       }
@@ -97,6 +99,7 @@ export async function runCoordinator(pool: Pool, policy: Policy, root: string): 
     logger.info({ signal }, 'coordinator shutting down');
     triage.stop();
     timers.forEach(clearInterval);
+    health.close();
     setTimeout(() => process.exit(0), 25_000).unref();
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM'));

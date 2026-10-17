@@ -44,7 +44,7 @@ service policy) and `systemctl --user enable docker`. Every service uses
 
 ```bash
 cp .env.example .env            # COLLECTOR_DATA_DIR, BROWSER_SERVER_PATH=$(openssl rand -hex 24), GATEWAY_EXTRA_DENY_CIDRS
-cp config/policy.yaml.example config/policy.yaml
+cp config/policy.yaml.example config/policy.yaml   # required: Compose refuses to start without it
 scripts/init-secrets.sh         # secrets/{postgres_superuser_password,collector_db_password,scrapling_db_password}
 $DC config --quiet              # validates interpolation, secrets, networks
 $DC build

@@ -115,7 +115,7 @@ export function readRecords(text: string, format: 'csv' | 'jsonl'): { line: numb
   return out;
 }
 
-async function upsertTarget(client: PoolClient, c: TargetCandidate): Promise<{ id: number; created: boolean }> {
+export async function upsertTarget(client: PoolClient, c: TargetCandidate): Promise<{ id: number; created: boolean }> {
   const ins = await client.query<{ id: number }>(
     `INSERT INTO targets (input_kind, candidate_of_input, candidate_scheme, url, scheme, hostname_ascii,
         hostname_unicode, port, path_and_query, fragment, registrable_domain, is_ip_literal, nonstandard_port, dedup_key)

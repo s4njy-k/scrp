@@ -84,6 +84,26 @@ export class EgressGateway {
   private readonly resolveFn: (host: string) => Promise<string[]>;
   private readonly classifyFn: (address: string) => AddressVerdict;
   readonly stats = { allowed: 0, denied: 0, failed: 0 };
+  /**
+   * Short positive DNS cache (pages open many connections to the same hosts).
+   * Safe against rebinding: every cached answer is re-classified on use and the
+   * connection is still pinned to those checked addresses.
+   */
+  private readonly dnsCache = new Map<string, { addresses: string[]; expires: number }>();
+  private static readonly DNS_CACHE_MS = 30_000;
+  private static readonly DNS_CACHE_MAX = 2000;
+
+  private async resolveCached(host: string): Promise<string[]> {
+    const hit = this.dnsCache.get(host);
+    if (hit && hit.expires > Date.now()) return hit.addresses;
+    const addresses = await withTimeout(this.resolveFn(host), this.opts.dnsTimeoutMs, 'dns');
+    if (this.dnsCache.size >= EgressGateway.DNS_CACHE_MAX) {
+      const oldest = this.dnsCache.keys().next().value;
+      if (oldest !== undefined) this.dnsCache.delete(oldest);
+    }
+    this.dnsCache.set(host, { addresses, expires: Date.now() + EgressGateway.DNS_CACHE_MS });
+    return addresses;
+  }
 
   constructor(private readonly opts: GatewayOptions) {
     this.resolveFn = opts.resolve ?? systemResolve;
@@ -103,7 +123,7 @@ export class EgressGateway {
       const hv = classifyHostname(host);
       if (!hv.ok) return { allowed: false, host, port, error: 'destination_denied', reason: hv.reason };
       try {
-        addresses = await withTimeout(this.resolveFn(host), this.opts.dnsTimeoutMs, 'dns');
+        addresses = await this.resolveCached(host);
       } catch (err) {
         return { allowed: false, host, port, error: dnsErrorKind(err), reason: bounded((err as Error).message, 200) };
       }
@@ -172,6 +192,9 @@ export class EgressGateway {
   }
 
   private async handleConnect(req: IncomingMessage, clientSocket: Duplex, head: Buffer): Promise<void> {
+    // Attach immediately: a client that resets during DNS/connect must not raise an
+    // unhandled 'error' event (which would crash the gateway for every other client).
+    clientSocket.on('error', () => clientSocket.destroy());
     const target = req.url ?? '';
     const m = /^(\[[^\]]+\]|[^:]+):(\d{1,5})$/.exec(target);
     if (!m) {
@@ -182,8 +205,18 @@ export class EgressGateway {
       this.refuseSocket(clientSocket, 503, 'capacity');
       return;
     }
+    // Count pending tunnels too, so a burst of slow DNS lookups cannot exceed the cap.
+    this.activeTunnels += 1;
+    let counted = true;
+    const uncount = () => {
+      if (counted) {
+        counted = false;
+        this.activeTunnels -= 1;
+      }
+    };
     const d = await this.decide(m[1]!, Number(m[2]));
     if (!d.allowed) {
+      uncount();
       this.log('connect', d);
       this.refuseSocket(clientSocket, this.statusFor(d.error!), d.error!, d.reason);
       return;
@@ -192,15 +225,20 @@ export class EgressGateway {
     try {
       upstream = await this.connectPinned(d);
     } catch (err) {
+      uncount();
       const error = connectErrorKind(err);
       this.stats.failed += 1;
       this.log('connect', { ...d, allowed: false, error, reason: (err as Error).message });
       this.refuseSocket(clientSocket, this.statusFor(error), error, (err as Error).message);
       return;
     }
+    upstream.once('close', uncount);
+    if (clientSocket.destroyed) {
+      // Client went away while we were connecting: do not leave an orphan upstream socket.
+      upstream.destroy();
+      return;
+    }
     this.log('connect', d);
-    this.activeTunnels += 1;
-    upstream.once('close', () => { this.activeTunnels -= 1; });
     clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     if (head.length) upstream.write(head);
     this.armTunnelLimits(clientSocket, upstream);
@@ -273,6 +311,7 @@ export class EgressGateway {
 
   /** Absolute-form WebSocket upgrade (ws://). wss:// arrives as CONNECT. */
   private async handleUpgrade(req: IncomingMessage, clientSocket: Duplex, head: Buffer): Promise<void> {
+    clientSocket.on('error', () => clientSocket.destroy());
     const u = this.parseAbsolute(req);
     if (!u || u.protocol !== 'http:' && u.protocol !== 'ws:') {
       this.refuseSocket(clientSocket, 403, 'scheme_denied', 'absolute-form ws/http URL required');
@@ -290,6 +329,10 @@ export class EgressGateway {
     } catch (err) {
       const error = connectErrorKind(err);
       this.refuseSocket(clientSocket, this.statusFor(error), error, (err as Error).message);
+      return;
+    }
+    if (clientSocket.destroyed) {
+      upstream.destroy();
       return;
     }
     const lines = [`${req.method} ${u.pathname}${u.search} HTTP/1.1`];

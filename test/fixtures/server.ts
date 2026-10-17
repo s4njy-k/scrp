@@ -77,6 +77,26 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse, url: UR
     res.write(`<!doctype html><html><head><title>Slow</title></head><body><h1>Partial content visible</h1><p>Contact slow@acme-refund.example</p>${' '.repeat(2048)}`);
     // Never call res.end(): navigation/readiness time out while content is renderable.
   },
+  // Accepts the request and never responds: a navigation timeout with nothing renderable.
+  '/hang': () => { /* intentionally never answers */ },
+  // JS challenge that clears by itself (ordinary browser completion) and lands on real content.
+  '/challenge-js': (_q, res) => {
+    res.writeHead(403, { 'content-type': 'text/html', server: 'cloudflare' });
+    res.end(html('<div id="challenge-form">Checking your browser…</div><script>setTimeout(function(){ location.replace("/static"); }, 800);</script>', 'Just a moment...'));
+  },
+  // Legitimately text-free page: an image only.
+  '/image-only': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html('<img src="/qr.png" alt="" width="246" height="246">', ''));
+  },
+  '/set-cookie': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': 'session=target-a-secret; Path=/; HttpOnly' });
+    res.end(html('<p>cookie set</p>', 'Set'));
+  },
+  '/echo-cookie': (q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html(`<p id="cookie">cookie=[${(q.headers.cookie ?? 'none').replace(/[<>&]/g, '')}]</p>`, 'Echo'));
+  },
   '/login': (_q, res) => {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(html('<h1>Sign in</h1><form action="/do-login"><input name="u"><input type="password" name="p"><button>Login</button></form>', 'Login'));

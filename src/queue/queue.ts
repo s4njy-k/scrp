@@ -271,17 +271,17 @@ function hostOf(url: string | null): string | null {
  */
 export async function commitAttempt(pool: Pool, policy: Policy, lease: Lease, result: AttemptResult): Promise<{ ownershipHeld: boolean }> {
   return withTransaction(pool, async (client) => {
+    // Lock order everywhere is jobs -> attempts (same as the reclaimer), so a commit
+    // racing a lease expiry cannot deadlock.
+    const jobRow = await client.query<JobRow>('SELECT * FROM jobs WHERE id = $1 FOR UPDATE', [lease.job.id]);
     const existing = await client.query<{ status: string }>('SELECT status FROM attempts WHERE id = $1 FOR UPDATE', [lease.attemptId]);
     const prior = existing.rows[0]?.status;
     if (prior && prior !== 'pending' && prior !== 'interrupted') {
       return { ownershipHeld: prior === 'committed' }; // already committed: idempotent no-op
     }
 
-    const own = await client.query<JobRow>(
-      `SELECT * FROM jobs WHERE id = $1 AND lease_token = $2 AND state IN ${ACTIVE_STATES} FOR UPDATE`,
-      [lease.job.id, lease.token],
-    );
-    const ownershipHeld = own.rows.length === 1;
+    const current = jobRow.rows[0];
+    const ownershipHeld = Boolean(current && Number(current.lease_token) === lease.token && ['LEASED', 'CAPTURING', 'FINALISING'].includes(current.state));
     const m = result.manifest;
     const attemptStatus = result.status === 'interrupted' ? 'interrupted' : ownershipHeld ? 'committed' : 'committed_lease_lost';
     const retentionDays = policy.retention.classes[lease.job.retention_class] ?? null;
@@ -327,7 +327,7 @@ export async function commitAttempt(pool: Pool, policy: Policy, lease: Lease, re
       return { ownershipHeld };
     }
 
-    await applyDecision(client, policy, own.rows[0]!, lease, result.decision, result.activeSeconds);
+    await applyDecision(client, policy, current!, lease, result.decision, result.activeSeconds);
     await releasePermit(client, lease);
     await audit(client, lease.workerId, 'attempt_committed', {
       token: lease.token, outcome: m?.outcome, classification: m?.classification, decision: result.decision,

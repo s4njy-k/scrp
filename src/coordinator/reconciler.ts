@@ -10,7 +10,7 @@
  *  - pending attempt rows with no directory anywhere are marked interrupted;
  *  - unknown directories are reported, never deleted.
  */
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Policy } from '../config/policy.js';
 import { audit, withTransaction, type Pool } from '../db/pool.js';
@@ -122,12 +122,24 @@ export async function reconcile(pool: Pool, policy: Policy, root: string): Promi
     for (const name of attemptTmp) {
       const row = byId.get(name);
       if (row?.lease_live) continue; // still being written by a live worker
-      const st = await stat(join(root, 'tmp', name)).catch(() => null);
+      const tmpDir = join(root, 'tmp', name);
+      const st = await stat(tmpDir).catch(() => null);
       if (!st) continue;
-      // Grace period for a just-started attempt whose lease row is not visible yet.
-      if (!row && Date.now() - st.mtimeMs < policy.queue.lease_seconds * 1000) continue;
+      const files = await listFiles(tmpDir);
+      // Quiet period: a worker whose lease just lapsed may still be finishing writes.
+      // Salvage only once nothing in the directory has changed for a full lease duration.
+      let newest = st.mtimeMs;
+      for (const rel of files) newest = Math.max(newest, (await stat(join(tmpDir, rel)).catch(() => null))?.mtimeMs ?? 0);
+      if (Date.now() - newest < policy.queue.lease_seconds * 1000) continue;
+      if (row && row.status !== 'pending' && row.status !== 'interrupted') {
+        // The attempt was already finalised elsewhere; this is a stray (e.g. a late write).
+        // Move it out of the scan set once, never delete it.
+        const stray = join(root, 'tmp', `stray-${name}-${Date.now()}`);
+        await rename(tmpDir, stray);
+        await audit(pool, 'reconciler', 'stray_tmp_directory_set_aside', { attempt_status: row.status, moved_to: `tmp/${stray.split('/').pop()}` }, { attemptId: name });
+        continue;
+      }
       const writer = new AttemptWriter(root, name, Number.MAX_SAFE_INTEGER);
-      const files = await listFiles(join(root, 'tmp', name));
       for (const rel of files) {
         if (rel === 'manifest.json') continue;
         writer.registerExternalFile(rel, {
@@ -149,13 +161,16 @@ export async function reconcile(pool: Pool, policy: Policy, root: string): Promi
     }
   }
 
-  // 3. Interrupted/pending attempt rows with no directory anywhere and no live lease.
+  // 3. Pending attempt rows with no directory anywhere and no live lease
+  //    (a tmp directory still inside its quiet period is not "no directory").
+  const tmpStill = (await readdir(join(root, 'tmp')).catch(() => [] as string[])).filter((n) => ATTEMPT_ID_RE.test(n));
   const stale = await pool.query(
     `UPDATE attempts a SET status = 'interrupted', error = COALESCE(a.error, 'no artifact directory found at reconciliation'), ended_at = COALESCE(a.ended_at, now())
       FROM jobs j WHERE j.id = a.job_id AND a.status = 'pending' AND a.artifact_dir IS NULL
         AND NOT (j.current_attempt_id = a.id AND j.lease_expires_at > now())
+        AND NOT (a.id = ANY($2::uuid[]))
         AND a.started_at < now() - make_interval(secs => $1)`,
-    [policy.queue.lease_seconds * 2],
+    [policy.queue.lease_seconds * 2, tmpStill],
   );
   report.pendingWithoutDirectory = stale.rowCount ?? 0;
   if (Object.values(report).some((v) => v > 0)) logger.info(report, 'reconciliation');

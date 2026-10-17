@@ -7,9 +7,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { isIP } from 'node:net';
 import { join } from 'node:path';
-import { parse as parseDomain } from 'tldts';
 import type { Policy } from '../config/policy.js';
 import { audit, withTransaction, type Pool } from '../db/pool.js';
 import { logger } from '../observability/logger.js';
@@ -18,6 +16,8 @@ import { sha256File } from '../storage/artifactStore.js';
 import { ALL_FIELDS, dedupeIdentifiers, extractFromHtmlAttributes, extractFromText, type FieldType, type Identifier } from './identifiers.js';
 import { decodeQrFromPng } from './qr.js';
 import { ocrAvailable, ocrImage } from './ocr.js';
+import { parseTargetInput, type TargetCandidate } from '../importer/url.js';
+import { upsertTarget } from '../importer/importer.js';
 
 interface ArtifactRow {
   id: number;
@@ -266,7 +266,10 @@ export async function runExtraction(pool: Pool, policy: Policy, root: string, at
     await audit(client, 'extraction', 'extraction_done', { identifiers: identifiers.length, failures: failures.slice(0, 10), qr: qrResults.length, ocr: ocrResults.length }, { jobId: attempt.job_id, attemptId: attempt.id });
   });
 
-  if (attempt.kind === 'browser' && attempt.parent_job_id === null && attempt.profile === 'browser_evidence' && links.size > 0) {
+  // Only pages whose content was actually reached are worth expanding; links on a
+  // challenge, block or error page would spend budget on the same refusal.
+  const contentReached = attempt.outcome === 'CONTENT_CAPTURED' || attempt.outcome === 'CONTENT_INCOMPLETE';
+  if (attempt.kind === 'browser' && attempt.parent_job_id === null && attempt.profile === 'browser_evidence' && contentReached && links.size > 0) {
     await spawnChildJobs(pool, policy, attempt, [...links]);
   }
 }
@@ -285,36 +288,36 @@ async function spawnChildJobs(pool: Pool, policy: Policy, attempt: AttemptRow, l
   const max = Math.min(Number(attempt.scope.child_pages_max ?? policy.limits.child_pages_per_target_max), policy.limits.child_pages_per_target_max);
   if (max <= 0) return;
   const targetNoFrag = attempt.target_url.split('#')[0];
-  const candidates = [...new Set(links)].filter((l) => {
+  // Same normalisation and rejection rules as the importer (userinfo, schemes, ports, PSL grouping).
+  const candidates: TargetCandidate[] = [];
+  const seen = new Set<string>();
+  for (const l of links) {
+    if (l.split('#')[0] === targetNoFrag) continue;
+    const parsed = parseTargetInput(l, policy.scope, 'url');
+    if (!parsed.ok) continue;
+    const c = parsed.candidates[0]!;
+    if (c.registrableDomain !== attempt.registrable_domain || seen.has(c.dedupKey)) continue;
+    let pathAndQuery: string;
     try {
-      const u = new URL(l);
-      if (!(policy.scope.allowed_schemes as readonly string[]).includes(u.protocol.replace(':', ''))) return false;
-      if (u.username || u.password) return false;
-      const bare = u.hostname.replace(/^\[|\]$/g, '');
-      // Same grouping rule as the importer: an IP literal is its own registrable unit.
-      const reg = isIP(bare) ? bare : parseDomain(u.hostname, { allowPrivateDomains: true }).domain;
-      return reg === attempt.registrable_domain && l.split('#')[0] !== targetNoFrag && RELEVANT_CHILD_LINK.test(u.pathname + u.search);
+      const u = new URL(c.url);
+      pathAndQuery = u.pathname + u.search;
     } catch {
-      return false;
+      continue;
     }
-  });
+    if (!RELEVANT_CHILD_LINK.test(pathAndQuery)) continue;
+    seen.add(c.dedupKey);
+    candidates.push(c);
+  }
   if (candidates.length === 0) return;
   await withTransaction(pool, async (client) => {
-    const existing = await client.query<{ n: number }>('SELECT count(*)::int AS n FROM jobs WHERE parent_job_id = $1 AND NOT (scope ? \'scheme_fallback_of_job\')', [attempt.job_id]);
+    // Serialise child creation per parent so concurrent extractions cannot exceed the cap.
+    await client.query('SELECT id FROM jobs WHERE id = $1 FOR UPDATE', [attempt.job_id]);
+    const existing = await client.query<{ n: number }>(`SELECT count(*)::int AS n FROM jobs WHERE parent_job_id = $1 AND NOT (scope ? 'scheme_fallback_of_job')`, [attempt.job_id]);
     let room = max - (existing.rows[0]?.n ?? 0);
-    for (const url of candidates) {
+    for (const c of candidates) {
       if (room <= 0) break;
-      const u = new URL(url);
-      const port = u.port ? Number(u.port) : null;
-      const effPort = port ?? (u.protocol === 'https:' ? 443 : 80);
-      if (!policy.scope.allowed_ports.includes(effPort)) continue;
-      const dedupKey = `${u.protocol.replace(':', '')}://${u.hostname}:${effPort}${u.pathname}${u.search}${u.hash}`;
-      const t = await client.query<{ id: number }>(
-        `INSERT INTO targets (input_kind, url, scheme, hostname_ascii, hostname_unicode, port, path_and_query, fragment, registrable_domain, dedup_key)
-         VALUES ('url',$1,$2,$3,$3,$4,$5,$6,$7,$8) ON CONFLICT (dedup_key) DO UPDATE SET dedup_key = EXCLUDED.dedup_key RETURNING id`,
-        [url, u.protocol.replace(':', ''), u.hostname, port, `${u.pathname}${u.search}`, u.hash ? u.hash.slice(1) : null, attempt.registrable_domain, dedupKey],
-      );
-      const dup = await client.query('SELECT 1 FROM jobs WHERE parent_job_id = $1 AND target_id = $2', [attempt.job_id, t.rows[0]!.id]);
+      const t = await upsertTarget(client, c);
+      const dup = await client.query('SELECT 1 FROM jobs WHERE parent_job_id = $1 AND target_id = $2', [attempt.job_id, t.id]);
       if (dup.rowCount) continue;
       const child = await client.query<{ id: number }>(
         `INSERT INTO jobs (target_id, parent_job_id, profile, window_key, registrable_domain, priority, urgent, required_artifacts, capture_variant,
@@ -323,10 +326,10 @@ async function spawnChildJobs(pool: Pool, policy: Policy, attempt: AttemptRow, l
             jsonb_build_object('child_page', true, 'discovered_from_attempt', $3::text, 'child_pages_max', 0), j.allowed_interactions,
             j.retention_class, j.case_ref, j.deadline, 'browser_primary'
            FROM jobs j WHERE j.id = $1 RETURNING id`,
-        [attempt.job_id, t.rows[0]!.id, attempt.id],
+        [attempt.job_id, t.id, attempt.id],
       );
       await client.query('INSERT INTO job_sources (job_id, source_record_id) SELECT $2, source_record_id FROM job_sources WHERE job_id = $1 ON CONFLICT DO NOTHING', [attempt.job_id, child.rows[0]!.id]);
-      await audit(client, 'extraction', 'child_job_created', { parent_job_id: attempt.job_id, url }, { jobId: child.rows[0]!.id, attemptId: attempt.id });
+      await audit(client, 'extraction', 'child_job_created', { parent_job_id: attempt.job_id, url: c.url }, { jobId: child.rows[0]!.id, attemptId: attempt.id });
       room -= 1;
     }
   });

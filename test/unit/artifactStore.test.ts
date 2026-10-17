@@ -58,6 +58,31 @@ describe('immutable attempt directories (§12, §15)', () => {
     expect(w.budgetEvents[0]).toMatch(/attempt_budget_exceeded/);
   });
 
+  it('refuses writes after finalisation so late writers cannot recreate the moved directory', async () => {
+    const t = await tempRoot();
+    cleanup = t.cleanup;
+    const id = randomUUID();
+    const w = new AttemptWriter(t.root, id, 1024 * 1024);
+    await w.init();
+    await w.finalise(base(id));
+    const ok = await w.writeArtifact('bodies/00001.html', 'late', { type: 'response_body', observedStart: null, observedEnd: null, creationMethod: 't', completeness: 'complete', limitations: [] });
+    expect(ok).toBe(false);
+    await expect(stat(join(t.root, 'tmp', id))).rejects.toThrow();
+  });
+
+  it('keeps a legitimately empty artifact complete but flags unexplained empty files', async () => {
+    const t = await tempRoot();
+    cleanup = t.cleanup;
+    const id = randomUUID();
+    const w = new AttemptWriter(t.root, id, 1024 * 1024);
+    await w.init();
+    await w.writeArtifact('dom/rendered.txt', '', { type: 'rendered_text', observedStart: null, observedEnd: null, creationMethod: 't', completeness: 'complete', limitations: [], metadata: { empty_is_legitimate: true } });
+    await w.writeArtifact('dom/rendered.html', '', { type: 'rendered_dom', observedStart: null, observedEnd: null, creationMethod: 't', completeness: 'complete', limitations: [] });
+    const fin = await w.finalise(base(id));
+    expect(fin.manifest.artifacts.find((a) => a.type === 'rendered_text')?.completeness).toBe('complete');
+    expect(fin.manifest.artifacts.find((a) => a.type === 'rendered_dom')?.completeness).toBe('partial');
+  });
+
   it('never builds paths from untrusted text', () => {
     expect(() => assertSafeRelative('../etc/passwd')).toThrow();
     expect(() => assertSafeRelative('a/../../b')).toThrow();

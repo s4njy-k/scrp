@@ -14,6 +14,9 @@ import { decideInfrastructure, type Classified, type RouterJob } from '../router
 import { AttemptWriter } from '../storage/artifactStore.js';
 import { evaluateRequired, processingStateFor, type ManifestEntry } from './contract.js';
 
+/** How far past its deadline an attempt may run before it is abandoned as an infrastructure failure. */
+export const HARD_DEADLINE_GRACE_MS = 20_000;
+
 export interface CaptureContext {
   writer: AttemptWriter;
   deadline: number;
@@ -91,8 +94,26 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
 
   try {
     await writer.init();
-    await setLeasedState(pool, lease, 'CAPTURING');
-    const outcome = await args.capture({ writer, deadline, signal: controller.signal });
+    // Fencing before the first target contact: a lease already lost is never used.
+    if (!(await setLeasedState(pool, lease, 'CAPTURING'))) {
+      leaseLost = true;
+      controller.abort(new Error('lease_lost'));
+      throw new Error('lease lost before target contact');
+    }
+    // Backstop: even if a library call ignores its own timeout, the attempt cannot
+    // exceed its deadline by more than a short grace period. A late capture keeps
+    // running in the background but can no longer write (the directory is sealed).
+    const hardMs = deadline - Date.now() + HARD_DEADLINE_GRACE_MS;
+    let hardTimer: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      args.capture({ writer, deadline, signal: controller.signal }),
+      new Promise<never>((_, reject) => {
+        hardTimer = setTimeout(() => {
+          controller.abort(new Error('attempt_hard_deadline'));
+          reject(new Error(`attempt exceeded its hard deadline (${Math.round(hardMs / 1000)} s)`));
+        }, Math.max(1000, hardMs));
+      }),
+    ]).finally(() => clearTimeout(hardTimer));
     await setLeasedState(pool, lease, 'FINALISING');
 
     let decided: ReturnType<CaptureOutcome['decide']> | null = null;

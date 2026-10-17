@@ -25,7 +25,7 @@ import { captureWithBrowser } from '../capture/browserCapture.js';
 import { classifyBrowser, decideAfterBrowser } from '../router/router.js';
 import type { EgressConfig } from '../acquisition/egress.js';
 import type { JobStage } from '../acquisition/contract.js';
-import { BrowserPool, type Engine } from './browserPool.js';
+import { BrowserPool, type BrowserLease, type Engine } from './browserPool.js';
 
 export interface BrowserWorkerOptions {
   pool: Pool;
@@ -47,6 +47,12 @@ export class BrowserWorker {
   readonly workerId: string;
   private autoscaled: AutoscaledPool | null = null;
   private stopping = false;
+  /**
+   * Crawlee re-runs a task immediately (setImmediate) after one finishes. When
+   * work is due but cannot be leased (permits busy, domain locked, pacing), back
+   * off instead of spinning against PostgreSQL.
+   */
+  private idleUntil = 0;
   lastProgressAt = Date.now();
   activeLeases = new Map<string, Lease>();
 
@@ -59,7 +65,7 @@ export class BrowserWorker {
   }
 
   private async hasDueWork(): Promise<boolean> {
-    if (this.stopping) return false;
+    if (this.stopping || Date.now() < this.idleUntil) return false;
     try {
       const adm = await readAdmission(this.o.pool);
       if (adm.paused) return false;
@@ -71,6 +77,9 @@ export class BrowserWorker {
       this.lastProgressAt = Date.now();
       return rows[0]?.due ?? false;
     } catch (err) {
+      // The loop is alive; only the database is not. Do not let the watchdog restart us for that.
+      this.lastProgressAt = Date.now();
+      this.idleUntil = Date.now() + 5000;
       logger.warn({ err: (err as Error).message }, 'database unavailable; acquisition paused');
       return false;
     }
@@ -98,26 +107,32 @@ export class BrowserWorker {
     const lease = await leaseNext(pool, policy, {
       workerId: this.workerId, stages: this.stages(), needsBrowserPermit: true, engine: 'playwright', adapter: 'playwright', vantage: this.o.egress.vantage,
     });
-    if (!lease) return;
+    if (!lease) {
+      this.idleUntil = Date.now() + 2000;
+      return;
+    }
     this.activeLeases.set(lease.attemptId, lease);
     const engine = engineForStage(lease.stage, policy);
+    let browserLease: BrowserLease | null = null;
     try {
-      let browser;
+      let storageState: BrowserContextOptions['storageState'] | undefined;
+      const sessionId = randomUUID();
       try {
-        browser = await this.o.browsers.acquire(engine);
+        browserLease = await this.o.browsers.acquire(engine);
+        await pool.query(`UPDATE attempts SET engine = $2 WHERE id = $1`, [lease.attemptId, engine]);
+        storageState = await this.previousStorageState(lease, engine);
+        await pool.query(
+          `INSERT INTO sessions (id, target_id, job_id, engine, vantage, locale, timezone, viewport) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [sessionId, lease.target.id, lease.job.id, engine, this.o.egress.vantage, policy.browser.locale, policy.browser.timezone, policy.capture.viewport],
+        );
       } catch (err) {
         // No target contact happened: refund the budget and retry later.
-        logger.error({ err: (err as Error).message, engine }, 'browser unavailable; releasing lease unstarted');
-        await releaseUnstarted(pool, lease, `browser unavailable: ${(err as Error).message.slice(0, 200)}`, 60);
+        logger.error({ err: (err as Error).message, engine }, 'preparation failed before target contact; releasing lease unstarted');
+        await releaseUnstarted(pool, lease, `preparation failed: ${(err as Error).message.slice(0, 200)}`, 60).catch((e: Error) =>
+          logger.error({ err: e.message }, 'could not release lease; it will be reclaimed on expiry'));
         return;
       }
-      await pool.query(`UPDATE attempts SET engine = $2 WHERE id = $1`, [lease.attemptId, engine]);
-      const storageState = await this.previousStorageState(lease, engine);
-      const sessionId = randomUUID();
-      await pool.query(
-        `INSERT INTO sessions (id, target_id, job_id, engine, vantage, locale, timezone, viewport) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [sessionId, lease.target.id, lease.job.id, engine, this.o.egress.vantage, policy.browser.locale, policy.browser.timezone, policy.capture.viewport],
-      );
+      const browser = browserLease.browser;
       let crashed = false;
       await runLeasedAttempt({
         pool, policy, lease, artifactRoot: this.o.artifactRoot, kind: 'browser', engine, adapter: 'playwright', vantage: this.o.egress.vantage,
@@ -128,8 +143,8 @@ export class BrowserWorker {
             relaxedTls: lease.job.scope.relaxed_tls === true, egress: this.o.egress, storageState,
             isolation: { mode: this.o.browsers.cfg.mode, chromiumSandbox: this.o.browsers.cfg.chromiumSandbox },
           });
-          crashed = r.observation.rendererCrashed;
-          await pool.query('UPDATE sessions SET user_agent = $2 WHERE id = $1', [sessionId, r.userAgent]);
+          crashed = r.observation.rendererCrashed || !browser.isConnected();
+          await pool.query('UPDATE sessions SET user_agent = $2 WHERE id = $1', [sessionId, r.userAgent]).catch(() => undefined);
           return {
             finalUrl: r.finalUrl, engineVersion: r.engineVersion, userAgent: r.userAgent, settings: r.settings, edges: r.edges,
             limitations: r.limitations, sessionId, extractionApplicable: r.observation.validScreenshots > 0 || r.observation.contentAppeared,
@@ -142,13 +157,16 @@ export class BrowserWorker {
           };
         },
       });
-      if (crashed) await this.o.browsers.discard(engine);
+      // Retire (not kill) the shared browser: another capture may still be using it.
+      if (crashed) this.o.browsers.discard(engine, 'renderer_crash_or_disconnect');
+      // In local mode the browser shares this process tree; in connect mode memory is bounded by the engine container.
       const rssMib = process.memoryUsage().rss / 1024 / 1024;
-      if (this.o.browsers && rssMib > policy.browser.recycle_above_rss_mib) {
-        logger.warn({ rss_mib: Math.round(rssMib) }, 'driver RSS above threshold; recycling browsers');
-        await this.o.browsers.closeAll();
+      if (this.o.browsers.cfg.mode === 'local' && rssMib > policy.browser.recycle_above_rss_mib) {
+        logger.warn({ rss_mib: Math.round(rssMib) }, 'driver RSS above threshold; retiring browsers');
+        this.o.browsers.retireAll('rss_above_threshold');
       }
     } finally {
+      browserLease?.release();
       this.activeLeases.delete(lease.attemptId);
       this.lastProgressAt = Date.now();
     }

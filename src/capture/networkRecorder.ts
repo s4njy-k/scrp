@@ -241,6 +241,7 @@ export class NetworkRecorder {
   }
 
   private maybeSaveBody(res: Response, req: Request, id: number, headers: Record<string, string>, isMainDocument: boolean): void {
+    if (this.stopped) return; // finalisation has begun: no new body writes
     const type = req.resourceType();
     const isDoc = req.isNavigationRequest();
     if (!isDoc && !this.policy.browser.body_resource_types.includes(type)) return;
@@ -266,6 +267,7 @@ export class NetworkRecorder {
         body = body.subarray(0, this.maxBody);
         truncated = true;
       }
+      if (this.stopped) return; // body arrived after finalisation started
       if (this.bodyBytes + body.length > this.bodyBudget) return omit('attempt_body_budget_exhausted');
       this.bodyBytes += body.length;
       const n = ++this.bodySeq;

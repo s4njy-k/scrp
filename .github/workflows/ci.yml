@@ -21,7 +21,7 @@ jobs:
           POSTGRES_DB: collector_test
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U collector" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U collector -d collector_test" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://collector:ci-only-not-secret@127.0.0.1:5432/collector_test
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
@@ -30,8 +30,8 @@ jobs:
       # Production uses the separate sandboxed browser-engine container.
       CHROMIUM_SANDBOX: 'false'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22.22.0
           cache: npm

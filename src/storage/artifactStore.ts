@@ -86,6 +86,8 @@ export class AttemptWriter {
   private readonly entries: PendingEntry[] = [];
   private readonly pending = new Set<Promise<unknown>>();
   private bytesReserved = 0;
+  /** Set when finalisation starts: late writers must not recreate the moved directory. */
+  private sealed = false;
   private readonly streams: { stream: WriteStream; done: Promise<void> }[] = [];
   readonly budgetEvents: string[] = [];
 
@@ -123,6 +125,10 @@ export class AttemptWriter {
   /** Write a whole file. Returns false when the attempt byte budget refuses it (entry recorded as omitted). */
   async writeArtifact(rel: string, data: Buffer | string, entry: Omit<PendingEntry, 'path'>): Promise<boolean> {
     assertSafeRelative(rel);
+    if (this.sealed) {
+      this.budgetEvents.push(`late_write_refused_after_finalisation:${rel}`);
+      return false;
+    }
     const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
     if (!this.reserve(buf.length, rel)) {
       this.entries.push({ ...entry, path: null, completeness: 'omitted', error: 'attempt_artifact_budget_exceeded', limitations: [...entry.limitations, `size ${buf.length} bytes exceeds remaining attempt budget`] });
@@ -130,6 +136,7 @@ export class AttemptWriter {
     }
     const target = join(this.tmpDir, rel);
     const task = (async () => {
+      if (this.sealed) throw new Error('attempt directory sealed');
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, buf, { mode: entry.restricted ? 0o600 : 0o640 });
     })();
@@ -222,6 +229,7 @@ export class AttemptWriter {
   ): Promise<{
     relativeDir: string; manifest: AttemptManifest; manifestSha256: string; totalBytes: number;
   }> {
+    this.sealed = true;
     const artifacts: ManifestEntry[] = [];
     let totalBytes = 0;
     for (const e of this.entries) {
@@ -236,8 +244,11 @@ export class AttemptWriter {
         await fsyncPath(abs);
         const { sha256, size } = await sha256File(abs);
         totalBytes += size;
-        const completeness: Completeness = size === 0 && e.completeness === 'complete' ? 'partial' : e.completeness;
-        artifacts.push({ ...e, sizeBytes: size, sha256, completeness, limitations: size === 0 ? [...e.limitations, 'zero-byte file'] : e.limitations });
+        // An empty file is suspicious unless the writer declared emptiness legitimate
+        // (e.g. a page with no visible text is a valid, sparse observation).
+        const emptyOk = e.metadata?.empty_is_legitimate === true;
+        const completeness: Completeness = size === 0 && e.completeness === 'complete' && !emptyOk ? 'partial' : e.completeness;
+        artifacts.push({ ...e, sizeBytes: size, sha256, completeness, limitations: size === 0 ? [...e.limitations, emptyOk ? 'empty (legitimate for this artifact)' : 'zero-byte file'] : e.limitations });
       } catch (err) {
         artifacts.push({ ...e, path: null, sizeBytes: null, sha256: null, completeness: 'failed', error: `file missing at finalisation: ${(err as Error).message}` });
       }

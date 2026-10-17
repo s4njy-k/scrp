@@ -16,6 +16,10 @@ const resolve = async (host: string): Promise<string[]> => {
   if (host === 'rebind.test') return ['93.184.215.14', '10.0.0.5'];
   if (host === 'metadata.test') return ['169.254.169.254'];
   if (host === 'mapped.test') return ['::ffff:127.0.0.1'];
+  if (host === 'slow.test') {
+    await new Promise((r) => setTimeout(r, 300));
+    return ['93.184.215.14'];
+  }
   const err = Object.assign(new Error('not found'), { code: 'ENOTFOUND' });
   throw err;
 };
@@ -91,6 +95,22 @@ describe('egress gateway connection-time policy (§13)', () => {
     await r2.body.dump();
     await expect(request('http://169.254.169.254/latest/meta-data/', { dispatcher })).rejects.toThrow();
     await dispatcher.close();
+  });
+
+  it('survives clients that reset while DNS or connect is still pending', async () => {
+    for (let i = 0; i < 5; i += 1) {
+      await new Promise<void>((res) => {
+        const s = connect(gwPort, '127.0.0.1', () => {
+          s.write('CONNECT slow.test:443 HTTP/1.1\r\nHost: slow.test:443\r\n\r\n');
+          setTimeout(() => { s.resetAndDestroy(); res(); }, 20);
+        });
+        s.on('error', () => res());
+      });
+    }
+    await new Promise((r) => setTimeout(r, 600));
+    const h = await request(`http://127.0.0.1:${gwPort}/__health`);
+    expect(h.statusCode).toBe(200);
+    expect((await h.body.json() as { active_tunnels: number }).active_tunnels).toBe(0);
   });
 
   it('reports decisions on /__resolve for DNS-versus-policy classification', async () => {

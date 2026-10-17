@@ -44,6 +44,20 @@ import ──► QUEUED(stage=http | browser_primary)
 * **Retries**: no library retries itself. undici has no retry, Playwright has no retry, Crawlee's
   `AutoscaledPool` does not retry tasks, and Scrapling runs with `retries=1`. The router is the
   only place where retries are decided.
+* **Lock order**: every transaction that touches both locks the `jobs` row before the `attempts`
+  row (commit, release, reclaim, Scrapling commit), so a commit racing a lease expiry cannot deadlock.
+* **Idle backoff**: Crawlee's `AutoscaledPool` re-runs a task immediately after one finishes. When
+  work is due but cannot be leased (permits busy, domain locked or paced), the workers back off
+  for 1–2 s instead of spinning against PostgreSQL.
+* **Shared browsers** (`src/worker/browserPool.ts`): captures take a lease on the shared browser.
+  Recycling (after N jobs or minutes), crash discards and memory recycling *retire* a browser:
+  it takes no new work and closes only after its last in-flight capture releases it. Concurrent
+  first acquires share a single launch.
+* **Deadlines**: every Playwright call in the capture is raced against the attempt deadline,
+  because some calls, such as `page.screenshot` on a page stuck mid-navigation, can ignore
+  their own timeout. As a backstop, `runLeasedAttempt` abandons a capture 20 s past its
+  deadline and records it as an infrastructure failure. A late capture cannot write any more,
+  because the attempt directory is sealed when finalisation starts.
 * **Permits** (`global_permits`): there are two slots in total across every engine and adapter.
   At most one can be held by an alternate adapter, enforced under an advisory lock. Backoff and
   `429` deferrals give the slot back. They never sleep inside it.
@@ -124,6 +138,17 @@ never used to build a path.
 - salvages orphaned `tmp/` directories into `incomplete/`;
 - marks pending rows that have no directory as interrupted;
 - reports unknown directories and never deletes them.
+
+Salvage waits for a quiet period of one lease duration with no file changes, so a worker that
+is slow to notice its lost lease is never disturbed mid-write. A tmp directory left over from an
+attempt that was already finalised is moved aside once (`tmp/stray-…`) and audited.
+
+Retention honours a hold on **any** case linked to a job. That covers the job's own `case_ref`
+and the case of every seed merged into it by deduplication (`job_sources` → `source_records`).
+
+Child pages (≤ 2 per target window) are created only from attempts that actually reached content.
+They go through the same parser as imported URLs, so the same rejection rules and Public Suffix
+List grouping apply.
 
 Derived outputs (identifiers, QR, OCR text) go to `derived/<uuid>/` with their own manifest, which
 points at the hashes of the source files. Attempt directories are never modified after the rename.

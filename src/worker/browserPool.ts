@@ -85,13 +85,26 @@ export function launchOptionsFor(engine: Engine, policy: Policy, egress: EgressC
 }
 
 interface Entry {
+  engine: Engine;
   browser: Browser;
   launchedAt: number;
   jobs: number;
+  /** Captures currently using this browser. */
+  active: number;
+  /** Retired browsers take no new work and close once their last capture releases them. */
+  retired: boolean;
+}
+
+/** A capture's claim on a shared browser. Always call release() in finally. */
+export interface BrowserLease {
+  browser: Browser;
+  release(): void;
 }
 
 export class BrowserPool {
-  private readonly entries = new Map<Engine, Entry>();
+  private readonly current = new Map<Engine, Entry>();
+  private readonly opening = new Map<Engine, Promise<Entry>>();
+  private readonly retiredEntries = new Set<Entry>();
 
   constructor(
     readonly cfg: BrowserPoolConfig,
@@ -113,36 +126,86 @@ export class BrowserPool {
     return type.launch({ ...launch, timeout: this.cfg.connectTimeoutMs });
   }
 
+  /** Concurrent first callers share one launch instead of each starting (and leaking) a browser. */
+  private openShared(engine: Engine): Promise<Entry> {
+    const pending = this.opening.get(engine);
+    if (pending) return pending;
+    const p = (async () => {
+      const browser = await this.open(engine);
+      const entry: Entry = { engine, browser, launchedAt: Date.now(), jobs: 0, active: 0, retired: false };
+      browser.on('disconnected', () => this.retire(entry, 'disconnected'));
+      this.current.set(engine, entry);
+      logger.info({ engine, version: browser.version(), mode: this.cfg.mode }, 'browser ready');
+      return entry;
+    })();
+    this.opening.set(engine, p);
+    void p.finally(() => this.opening.delete(engine)).catch(() => undefined);
+    return p;
+  }
+
+  private tooOld(e: Entry): boolean {
+    return Date.now() - e.launchedAt > this.policy.browser.recycle_after_minutes * 60_000 || e.jobs >= this.policy.browser.recycle_after_jobs;
+  }
+
+  /**
+   * Retire a browser: no new captures use it; it closes when its last
+   * in-flight capture releases it. Never closes a browser under a running capture.
+   */
+  private retire(e: Entry, reason: string): void {
+    if (this.current.get(e.engine) === e) this.current.delete(e.engine);
+    if (!e.retired) {
+      e.retired = true;
+      this.retiredEntries.add(e);
+      logger.info({ engine: e.engine, jobs: e.jobs, active: e.active, age_s: Math.round((Date.now() - e.launchedAt) / 1000), reason }, 'browser retired');
+    }
+    this.maybeClose(e);
+  }
+
+  private maybeClose(e: Entry): void {
+    if (!e.retired || e.active > 0) return;
+    this.retiredEntries.delete(e);
+    if (e.browser.isConnected()) e.browser.close().catch(() => undefined);
+  }
+
   /** Get a live browser, recycling after a bounded job count or age (§16). */
-  async acquire(engine: Engine): Promise<Browser> {
-    const e = this.entries.get(engine);
-    const tooOld = e && (Date.now() - e.launchedAt > this.policy.browser.recycle_after_minutes * 60_000 || e.jobs >= this.policy.browser.recycle_after_jobs);
-    if (e && e.browser.isConnected() && !tooOld) {
-      e.jobs += 1;
-      return e.browser;
+  async acquire(engine: Engine): Promise<BrowserLease> {
+    let e = this.current.get(engine);
+    if (e && (!e.browser.isConnected() || this.tooOld(e))) {
+      this.retire(e, e.browser.isConnected() ? 'recycle_after_jobs_or_age' : 'disconnected');
+      e = undefined;
     }
-    if (e) {
-      logger.info({ engine, jobs: e.jobs, age_s: Math.round((Date.now() - e.launchedAt) / 1000) }, 'recycling browser');
-      this.entries.delete(engine);
-      await e.browser.close().catch(() => undefined);
-    }
-    const browser = await this.open(engine);
-    browser.on('disconnected', () => {
-      if (this.entries.get(engine)?.browser === browser) this.entries.delete(engine);
-    });
-    this.entries.set(engine, { browser, launchedAt: Date.now(), jobs: 1 });
-    logger.info({ engine, version: browser.version(), mode: this.cfg.mode }, 'browser ready');
-    return browser;
+    if (!e) e = await this.openShared(engine);
+    const entry = e;
+    entry.jobs += 1;
+    entry.active += 1;
+    let released = false;
+    return {
+      browser: entry.browser,
+      release: () => {
+        if (released) return;
+        released = true;
+        entry.active -= 1;
+        this.maybeClose(entry);
+      },
+    };
   }
 
-  /** Force a recycle after a crash or abnormal memory growth. */
-  async discard(engine: Engine): Promise<void> {
-    const e = this.entries.get(engine);
-    this.entries.delete(engine);
-    await e?.browser.close().catch(() => undefined);
+  /** Recycle after a crash or abnormal memory growth; in-flight captures finish first. */
+  discard(engine: Engine, reason = 'discarded'): void {
+    const e = this.current.get(engine);
+    if (e) this.retire(e, reason);
   }
 
+  /** Retire every browser (graceful). */
+  retireAll(reason: string): void {
+    for (const e of [...this.current.values()]) this.retire(e, reason);
+  }
+
+  /** Shutdown: close everything, including browsers still in use. */
   async closeAll(): Promise<void> {
-    for (const engine of [...this.entries.keys()]) await this.discard(engine);
+    const all = [...this.current.values(), ...this.retiredEntries];
+    this.current.clear();
+    this.retiredEntries.clear();
+    await Promise.all(all.map((e) => e.browser.close().catch(() => undefined)));
   }
 }
