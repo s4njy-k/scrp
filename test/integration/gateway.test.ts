@@ -17,8 +17,9 @@ const resolve = async (host: string): Promise<string[]> => {
   if (host === 'metadata.test') return ['169.254.169.254'];
   if (host === 'mapped.test') return ['::ffff:127.0.0.1'];
   if (host === 'slow.test') {
+    // Slow DNS, then the (allowed) local fixture: no outbound traffic from the test.
     await new Promise((r) => setTimeout(r, 300));
-    return ['93.184.215.14'];
+    return ['127.0.0.1'];
   }
   const err = Object.assign(new Error('not found'), { code: 'ENOTFOUND' });
   throw err;
@@ -101,7 +102,7 @@ describe('egress gateway connection-time policy (§13)', () => {
     for (let i = 0; i < 5; i += 1) {
       await new Promise<void>((res) => {
         const s = connect(gwPort, '127.0.0.1', () => {
-          s.write('CONNECT slow.test:443 HTTP/1.1\r\nHost: slow.test:443\r\n\r\n');
+          s.write(`CONNECT slow.test:${fixture.port} HTTP/1.1\r\nHost: slow.test:${fixture.port}\r\n\r\n`);
           setTimeout(() => { s.resetAndDestroy(); res(); }, 20);
         });
         s.on('error', () => res());

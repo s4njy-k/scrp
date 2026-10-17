@@ -147,18 +147,28 @@ export class EgressGateway {
     logger.info({ egress: kind, allowed: d.allowed, host: bounded(d.host, 260), port: d.port, error: d.error, reason: d.reason, pinned: d.pinned?.[0], ...extra }, 'egress decision');
   }
 
-  private async connectPinned(d: Decision): Promise<Socket> {
+  /**
+   * Connect to the checked (pinned) addresses in order. When `client` is given,
+   * an in-progress connect is cancelled as soon as that client goes away, so an
+   * abandoned request never holds a tunnel slot until the connect timeout.
+   */
+  private async connectPinned(d: Decision, client?: Duplex): Promise<Socket> {
     let lastErr: unknown = null;
     for (const addr of d.pinned ?? []) {
+      if (client?.destroyed) throw Object.assign(new Error('client disconnected'), { code: 'ECONNABORTED' });
       try {
         return await new Promise<Socket>((resolve, reject) => {
           const sock = netConnect({ host: addr, port: d.port });
+          const cancel = () => sock.destroy(Object.assign(new Error('client disconnected'), { code: 'ECONNABORTED' }));
+          client?.once('close', cancel);
           const t = setTimeout(() => sock.destroy(Object.assign(new Error('connect timeout'), { code: 'ETIMEDOUT' })), this.opts.connectTimeoutMs);
-          sock.once('connect', () => { clearTimeout(t); resolve(sock); });
-          sock.once('error', (e) => { clearTimeout(t); reject(e); });
+          const done = () => { clearTimeout(t); client?.off('close', cancel); };
+          sock.once('connect', () => { done(); resolve(sock); });
+          sock.once('error', (e) => { done(); reject(e); });
         });
       } catch (err) {
         lastErr = err;
+        if ((err as { code?: string }).code === 'ECONNABORTED') break;
       }
     }
     throw lastErr ?? new Error('no pinned address');
@@ -223,7 +233,7 @@ export class EgressGateway {
     }
     let upstream: Socket;
     try {
-      upstream = await this.connectPinned(d);
+      upstream = await this.connectPinned(d, clientSocket);
     } catch (err) {
       uncount();
       const error = connectErrorKind(err);
@@ -325,7 +335,7 @@ export class EgressGateway {
     }
     let upstream: Socket;
     try {
-      upstream = await this.connectPinned(d);
+      upstream = await this.connectPinned(d, clientSocket);
     } catch (err) {
       const error = connectErrorKind(err);
       this.refuseSocket(clientSocket, this.statusFor(error), error, (err as Error).message);
