@@ -11,6 +11,10 @@ Development verification ran on 2026-10-17: `npm test` gave 11 test files (6 uni
 in-process **without** the Chromium sandbox, because the development container runs as root.
 The hardened sandboxed engine still has to be verified on the VM.
 
+Re-run on 2026-10-18 after the v4 / v0.3 checklist work: `npm test` gave **22 test files (9 unit,
+13 integration including the browser smoke test of the console) and 182 tests passing**, and the
+Python contract tests gave 4 passing. Same environment and the same sandbox caveat.
+
 | Check | Passing requirement | Evidence | Status |
 |---|---|---|---|
 | Deep URL and fragment route | Exact supplied location preserved and the relevant view attempted; no homepage substitution | `url.test.ts` (path/query order/tracking fields/fragment kept, distinct dedup keys); `browserCapture.test.ts › captures the exact deep URL with fragment route` (SPA route content captured, `finalUrl` = requested URL) | Verified (dev) |
