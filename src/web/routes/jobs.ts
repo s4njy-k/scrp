@@ -21,7 +21,8 @@ import { auditCtx, parseBody, type RouteDeps } from './common.js';
 export const JOB_SUMMARY_SELECT = `
   SELECT j.id, j.target_id, t.url, t.hostname_unicode, j.registrable_domain, j.profile, j.capture_variant, j.state, j.stage, j.outcome,
          j.classification, j.outcome_reason, j.priority, j.urgent, j.http_attempts, j.browser_attempts, j.active_seconds_used, j.parent_job_id,
-         j.created_at, j.updated_at, j.finished_at, j.next_eligible_at, j.retention_class,
+         j.created_at, j.updated_at, j.finished_at, CASE WHEN j.next_eligible_at = 'infinity' THEN NULL ELSE j.next_eligible_at END AS next_eligible_at,
+         (j.next_eligible_at = 'infinity') AS paused, j.retention_class,
          la.id AS latest_attempt_id, la.progress_stage, la.extraction_state, la.started_at AS latest_attempt_started_at,
          fi.id AS first_image_attempt_id, fi.first_image_at, fi.first_image_sha256, (fi.id IS NOT NULL AND fi.status = 'pending') AS first_image_provisional,
          tv.verdict, tv.decision AS last_decision,

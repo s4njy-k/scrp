@@ -405,6 +405,22 @@ export function actionRoutes(d: RouteDeps): RouteSpec[] {
       },
     },
     {
+      method: 'GET', path: '/api/v1/certificates', auth: 'full',
+      handler: async (ctx) => {
+        const caseId = ctx.url.searchParams.get('case_id');
+        const params: unknown[] = [ctx.user!.id, seesAllCases(ctx.user!)];
+        let extra = '';
+        if (caseId) { params.push(requireUuid(caseId, 'case_id')); extra = ` AND x.case_id = $${params.length}`; }
+        const { rows } = await d.pool.query(
+          `SELECT x.id, x.case_id, c.case_ref, x.part, x.state, cardinality(x.attempt_ids) AS attempt_count, x.prepared_by, x.created_at, x.completed_at, x.signed_recorded_at
+             FROM certificates x JOIN cases c ON c.id = x.case_id
+            WHERE ($2::boolean OR EXISTS (SELECT 1 FROM case_members m WHERE m.case_id = x.case_id AND m.user_id = $1))${extra}
+            ORDER BY x.created_at DESC LIMIT 200`, params,
+        );
+        return { items: rows };
+      },
+    },
+    {
       method: 'GET', path: '/api/v1/certificates/:id', auth: 'full',
       handler: async (ctx) => {
         const c = (await d.pool.query<{ case_id: string; part: 'A' | 'B' | 'A_and_B'; worksheet: Record<string, WorksheetValue>; template_source_version: string }>('SELECT * FROM certificates WHERE id = $1', [requireUuid(ctx.params.id)])).rows[0];
