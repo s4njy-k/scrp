@@ -16,6 +16,7 @@ import type { Policy } from '../config/policy.js';
 import { audit, withTransaction, type Pool, type PoolClient } from '../db/pool.js';
 import { parseTargetInput, type TargetCandidate } from './url.js';
 import { KNOWN_ARTIFACT_TYPES, PROFILE_DEFAULT_REQUIRED, ALLOWED_INTERACTIONS } from '../acquisition/contract.js';
+import { DEFAULT_XLSX_LIMITS, XlsxError, xlsxToRecords } from './xlsx.js';
 
 export const ImportRecordSchema = z
   .object({
@@ -33,22 +34,51 @@ export const ImportRecordSchema = z
     required_artifacts: z.union([z.array(z.string()), z.string()]).optional(),
     allowed_interactions: z.union([z.array(z.string()), z.string()]).optional(),
     retention_class: z.string().optional(),
-    capture_variant: z.enum(['desktop', 'mobile']).optional(),
+    // 'both' schedules two independently recorded attempts (desktop and mobile profiles).
+    capture_variant: z.enum(['desktop', 'mobile', 'both']).optional(),
     child_pages_max: z.coerce.number().int().min(0).optional(),
   })
   .passthrough();
 
 export type ImportRecord = z.infer<typeof ImportRecordSchema>;
 
+export type IntakeFormat = 'csv' | 'jsonl' | 'xlsx' | 'text';
+
 export interface ImportOptions {
   defaultProfile: 'data_triage' | 'browser_evidence';
   windowKey: string;
   importedBy: string;
-  format?: 'csv' | 'jsonl';
+  format?: IntakeFormat;
+}
+
+/** Extra options used by the web intake API (idempotent, case-scoped, previewable). */
+export interface IntakeOptions {
+  batchUuid?: string;
+  submittedByUserId?: string | null;
+  idempotencyKey?: string | null;
+  caseId?: string | null;
+  /** When set, every record is linked to this case; a record naming a different case is rejected. */
+  caseRef?: string | null;
+  requestId?: string | null;
+  lawfulBasis?: string | null;
+  authorisationRef?: string | null;
+  /** Validate and report exactly what would happen, then roll everything back. */
+  dryRun?: boolean;
+  maxRows?: number;
+  actorKind?: 'service' | 'user' | 'operator';
+}
+
+export interface LineResult {
+  line: number;
+  status: 'accepted' | 'merged' | 'rejected';
+  target?: string;
+  reason?: string;
+  job_ids?: number[];
 }
 
 export interface ImportSummary {
   batchId: number;
+  batchUuid?: string | null;
   lines: number;
   accepted: number;
   rejected: number;
@@ -56,6 +86,21 @@ export interface ImportSummary {
   jobsCreated: number;
   jobsMerged: number;
   rejections: { line: number; reason: string }[];
+  lineResults?: LineResult[];
+  dryRun?: boolean;
+  formulaCells?: number;
+}
+
+export class IntakeError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+  }
+}
+
+class DryRunRollback extends Error {
+  constructor(readonly summary: ImportSummary) {
+    super('dry run');
+  }
 }
 
 const TARGET_COLUMNS = ['target', 'url', 'domain', 'subdomain'] as const;
@@ -87,7 +132,16 @@ function normaliseRow(row: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-export function readRecords(text: string, format: 'csv' | 'jsonl'): { line: number; raw: Record<string, unknown> | null; error?: string }[] {
+export function readRecords(text: string, format: 'csv' | 'jsonl' | 'text'): { line: number; raw: Record<string, unknown> | null; error?: string }[] {
+  if (format === 'text') {
+    // One target per line (pasted list); '#' starts a comment line.
+    const out: { line: number; raw: Record<string, unknown> | null }[] = [];
+    text.split(/\r?\n/).forEach((l, idx) => {
+      const t = l.trim();
+      if (t && !t.startsWith('#')) out.push({ line: idx + 1, raw: { target: t } });
+    });
+    return out;
+  }
   if (format === 'csv') {
     const rows = parseCsv(text, {
       columns: (header: string[]) => header.map((h) => h.trim().toLowerCase()),
@@ -138,32 +192,72 @@ export function initialStage(profile: string, urgent: boolean, policy: Policy): 
 
 export async function importFile(pool: Pool, policy: Policy, filePath: string, opts: ImportOptions): Promise<ImportSummary> {
   const bytes = readFileSync(filePath);
-  const format = opts.format ?? (filePath.toLowerCase().endsWith('.jsonl') || filePath.toLowerCase().endsWith('.ndjson') ? 'jsonl' : 'csv');
-  return importText(pool, policy, bytes.toString('utf8'), {
-    ...opts,
-    format,
-    filename: basename(filePath),
-    sha256: createHash('sha256').update(bytes).digest('hex'),
-  });
+  const lower = filePath.toLowerCase();
+  const format: IntakeFormat = opts.format
+    ?? (lower.endsWith('.jsonl') || lower.endsWith('.ndjson') ? 'jsonl' : lower.endsWith('.xlsx') ? 'xlsx' : lower.endsWith('.txt') ? 'text' : 'csv');
+  return importBuffer(pool, policy, bytes, { ...opts, format, filename: basename(filePath), actorKind: 'operator' });
 }
 
 export async function importText(
   pool: Pool,
   policy: Policy,
   text: string,
-  opts: ImportOptions & { filename: string; sha256?: string; format: 'csv' | 'jsonl' },
+  opts: ImportOptions & IntakeOptions & { filename: string; sha256?: string; format: 'csv' | 'jsonl' | 'text' },
 ): Promise<ImportSummary> {
   const records = readRecords(text, opts.format);
   const sha = opts.sha256 ?? createHash('sha256').update(text).digest('hex');
+  return importRecords(pool, policy, records, { ...opts, sha256: sha });
+}
 
-  return withTransaction(pool, async (client) => {
+/** Decode an uploaded intake body by format (XLSX is parsed defensively; text must be valid UTF-8). */
+export async function importBuffer(
+  pool: Pool,
+  policy: Policy,
+  body: Buffer,
+  opts: ImportOptions & IntakeOptions & { filename: string; format: IntakeFormat },
+): Promise<ImportSummary> {
+  const sha256 = createHash('sha256').update(body).digest('hex');
+  if (opts.format === 'xlsx') {
+    let parsed: ReturnType<typeof xlsxToRecords>;
+    try {
+      parsed = xlsxToRecords(body, { ...DEFAULT_XLSX_LIMITS, maxRows: (opts.maxRows ?? DEFAULT_XLSX_LIMITS.maxRows) + 1 });
+    } catch (err) {
+      if (err instanceof XlsxError) throw new IntakeError(err.code, err.message);
+      throw err;
+    }
+    const summary = await importRecords(pool, policy, parsed.records, { ...opts, sha256 });
+    return { ...summary, formulaCells: parsed.formulaCells };
+  }
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  } catch {
+    throw new IntakeError('invalid_utf8', 'intake text must be UTF-8');
+  }
+  return importText(pool, policy, text, { ...opts, format: opts.format, sha256 });
+}
+
+export async function importRecords(
+  pool: Pool,
+  policy: Policy,
+  records: { line: number; raw: Record<string, unknown> | null; error?: string }[],
+  opts: ImportOptions & IntakeOptions & { filename: string; sha256: string; format: IntakeFormat },
+): Promise<ImportSummary> {
+  const sha = opts.sha256;
+  if (opts.maxRows !== undefined && records.length > opts.maxRows) {
+    throw new IntakeError('too_many_rows', `intake has ${records.length} records; the limit is ${opts.maxRows}`);
+  }
+  try {
+    return await withTransaction(pool, async (client) => {
     const batch = await client.query<{ id: number }>(
-      `INSERT INTO import_batches (filename, file_sha256, format, default_profile, imported_by)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [opts.filename, sha, opts.format, opts.defaultProfile, opts.importedBy],
+      `INSERT INTO import_batches (filename, file_sha256, format, default_profile, imported_by, batch_uuid, submitted_by_user,
+          idempotency_key, case_id, request_id, lawful_basis, authorisation_ref)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [opts.filename, sha, opts.format, opts.defaultProfile, opts.importedBy, opts.batchUuid ?? null, opts.submittedByUserId ?? null,
+       opts.idempotencyKey ?? null, opts.caseId ?? null, opts.requestId ?? null, opts.lawfulBasis ?? null, opts.authorisationRef ?? null],
     );
     const batchId = batch.rows[0]!.id;
-    const summary: ImportSummary = { batchId, lines: records.length, accepted: 0, rejected: 0, targetsCreated: 0, jobsCreated: 0, jobsMerged: 0, rejections: [] };
+    const summary: ImportSummary = { batchId, batchUuid: opts.batchUuid ?? null, lines: records.length, accepted: 0, rejected: 0, targetsCreated: 0, jobsCreated: 0, jobsMerged: 0, rejections: [], lineResults: [] };
 
     const rejectLine = async (line: number, raw: Record<string, unknown>, original: string, reason: string, rec?: Partial<ImportRecord>) => {
       await client.query(
@@ -173,6 +267,7 @@ export async function importText(
       );
       summary.rejected += 1;
       summary.rejections.push({ line, reason });
+      summary.lineResults!.push({ line, status: 'rejected', target: original.slice(0, 500), reason });
     };
 
     for (const { line, raw, error } of records) {
@@ -188,6 +283,13 @@ export async function importText(
         continue;
       }
       const rec = parsedRec.data;
+      if (opts.caseRef) {
+        if (rec.case_ref && rec.case_ref !== opts.caseRef) {
+          await rejectLine(line, raw, originalInput, 'case_ref_differs_from_intake_case', rec);
+          continue;
+        }
+        rec.case_ref = opts.caseRef;
+      }
       const profile = rec.profile ?? opts.defaultProfile;
       const required = splitList(rec.required_artifacts) ?? PROFILE_DEFAULT_REQUIRED[profile];
       const unknownArtifact = required.find((a) => !KNOWN_ARTIFACT_TYPES.has(a));
@@ -245,6 +347,10 @@ export async function importText(
         child_pages_max: Math.min(rec.child_pages_max ?? policy.limits.child_pages_per_target_max, policy.limits.child_pages_per_target_max),
         follow_external_redirects: policy.scope.follow_external_redirects,
       };
+      const variants = rec.capture_variant === 'both' ? ['desktop', 'mobile'] : [rec.capture_variant ?? 'desktop'];
+      const lineJobs: number[] = [];
+      let merged = false;
+      for (const variant of variants) {
       const jobIns = await client.query<{ id: number }>(
         `INSERT INTO jobs (target_id, profile, window_key, registrable_domain, priority, urgent, required_artifacts,
             capture_variant, scope, allowed_interactions, retention_class, case_ref, deadline, stage)
@@ -252,7 +358,7 @@ export async function importText(
          ON CONFLICT (target_id, profile, capture_variant, window_key) WHERE parent_job_id IS NULL DO NOTHING
          RETURNING id`,
         [targetIds[0], profile, opts.windowKey, primary.registrableDomain, rec.priority ?? 0, urgent, required,
-         rec.capture_variant ?? 'desktop', scope, interactions, retentionClass, rec.case_ref ?? null,
+         variant, scope, interactions, retentionClass, rec.case_ref ?? null,
          rec.deadline ?? null, initialStage(profile, urgent, policy)],
       );
       let jobId: number;
@@ -262,10 +368,11 @@ export async function importText(
       } else {
         const existing = await client.query<{ id: number }>(
           `SELECT id FROM jobs WHERE target_id=$1 AND profile=$2 AND capture_variant=$3 AND window_key=$4 AND parent_job_id IS NULL`,
-          [targetIds[0], profile, rec.capture_variant ?? 'desktop', opts.windowKey],
+          [targetIds[0], profile, variant, opts.windowKey],
         );
         jobId = existing.rows[0]!.id;
         summary.jobsMerged += 1;
+        merged = true;
         // A merged seed may raise priority/urgency but never lowers it.
         await client.query(
           `UPDATE jobs SET priority = GREATEST(priority, $2), urgent = urgent OR $3, updated_at = now(),
@@ -275,14 +382,26 @@ export async function importText(
           [jobId, rec.priority ?? 0, urgent],
         );
       }
+      lineJobs.push(jobId);
       await client.query('INSERT INTO job_sources (job_id, source_record_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [jobId, sourceId]);
+      }
+      summary.lineResults!.push({ line, status: merged ? 'merged' : 'accepted', target: rec.target.slice(0, 500), job_ids: lineJobs });
     }
 
     await client.query('UPDATE import_batches SET counts = $2 WHERE id = $1', [
       batchId,
       { lines: summary.lines, accepted: summary.accepted, rejected: summary.rejected, jobs_created: summary.jobsCreated, jobs_merged: summary.jobsMerged },
     ]);
-    await audit(client, opts.importedBy, 'import_batch', { batch_id: batchId, filename: opts.filename, sha256: sha, ...summary, rejections: summary.rejections.slice(0, 50) });
+    await audit(client, opts.importedBy, 'import_batch', {
+      batch_id: batchId, batch_uuid: opts.batchUuid ?? null, filename: opts.filename, sha256: sha, format: opts.format, lines: summary.lines,
+      accepted: summary.accepted, rejected: summary.rejected, jobs_created: summary.jobsCreated, jobs_merged: summary.jobsMerged,
+      rejections: summary.rejections.slice(0, 50), lawful_basis: opts.lawfulBasis ?? null, authorisation_ref: opts.authorisationRef ?? null,
+    }, { actorKind: opts.actorKind ?? 'operator', objectType: 'import_batch', objectId: opts.batchUuid ?? batchId, caseRef: opts.caseRef ?? null, requestId: opts.requestId ?? null, outcome: 'imported' });
+    if (opts.dryRun) throw new DryRunRollback(summary);
     return summary;
-  });
+    });
+  } catch (err) {
+    if (err instanceof DryRunRollback) return { ...err.summary, batchId: 0, dryRun: true };
+    throw err;
+  }
 }

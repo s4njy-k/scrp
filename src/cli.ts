@@ -3,6 +3,7 @@
  * Operator CLI contract (blueprint §18). Run inside the coordinator container:
  *   docker --context rootless compose -p cyber-web-collector exec coordinator node dist/cli.js <command>
  */
+import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { Command } from 'commander';
 import { loadPolicy, type Policy } from './config/policy.js';
@@ -58,7 +59,7 @@ program.command('migrate').description('Apply database migrations and sync brows
 });
 
 program.command('serve')
-  .argument('<role>', 'coordinator | browser-worker | gateway')
+  .argument('<role>', 'coordinator | browser-worker | gateway | api')
   .description('Run a long-lived service role')
   .action(async (role: string) => {
     process.env.COLLECTOR_ROLE = role;
@@ -74,6 +75,18 @@ program.command('serve')
     }
     const policy = loadPolicy();
     const root = artifactRoot();
+    if (role === 'api') {
+      const { buildApp } = await import('./web/app.js');
+      const pool = createPool(undefined, 10);
+      if (process.env.MIGRATE_ON_START === 'true') await migrate(pool);
+      const app = buildApp({ pool, policy, root });
+      // Loopback by default: reach it through an SSH tunnel or an approved reverse proxy (no public ingress).
+      await app.listen(Number(process.env.API_PORT ?? 8080), process.env.API_BIND ?? '127.0.0.1');
+      const stop = () => { void app.close().then(() => pool.end()).then(() => process.exit(0)); };
+      process.once('SIGTERM', stop);
+      process.once('SIGINT', stop);
+      return;
+    }
     if (role === 'coordinator') {
       const { runCoordinator } = await import('./coordinator/main.js');
       await runCoordinator(createPool(undefined, 8), policy, root);
@@ -86,16 +99,16 @@ program.command('serve')
   });
 
 program.command('import')
-  .argument('<file>', 'CSV or JSONL file (inside the container, e.g. /input/urls.csv)')
+  .argument('<file>', 'CSV, JSONL, XLSX or one-URL-per-line .txt file (inside the container, e.g. /input/urls.csv)')
   .option('--profile <profile>', 'default capture profile: data_triage | browser_evidence', 'browser_evidence')
   .option('--window <key>', 'collection window key for target/profile/window deduplication', today())
-  .option('--format <format>', 'csv | jsonl (default: by extension)')
+  .option('--format <format>', 'csv | jsonl | xlsx | text (default: by extension)')
   .option('--by <actor>', 'operator identifier recorded in the audit log', process.env.USER ?? 'operator')
   .description('Import targets; every line is recorded, including rejections with reasons')
   .action(async (file: string, o: { profile: string; window: string; format?: string; by: string }) => {
     if (o.profile !== 'data_triage' && o.profile !== 'browser_evidence') throw new Error('--profile must be data_triage or browser_evidence');
     await withPool(async (pool, policy) => {
-      const s = await importFile(pool, policy, file, { defaultProfile: o.profile as 'data_triage' | 'browser_evidence', windowKey: o.window, importedBy: o.by, ...(o.format ? { format: o.format as 'csv' | 'jsonl' } : {}) });
+      const s = await importFile(pool, policy, file, { defaultProfile: o.profile as 'data_triage' | 'browser_evidence', windowKey: o.window, importedBy: o.by, ...(o.format ? { format: o.format as 'csv' | 'jsonl' | 'xlsx' | 'text' } : {}) });
       print(s);
     });
   });
@@ -278,6 +291,48 @@ program.command('clock')
     await audit(pool, process.env.USER ?? 'operator', 'clock_status_recorded', value, { actorKind: 'operator', objectType: 'system', objectId: 'clock' });
     print(value);
   }));
+
+const users = program.command('user').description('Analyst accounts (bootstrap the first administrator here; manage others in the UI)');
+users.command('create')
+  .requiredOption('--username <name>').requiredOption('--display-name <text>')
+  .requiredOption('--roles <list>', 'comma-separated: admin,intake,analyst,approver,evidence,auditor,report')
+  .option('--by <actor>', 'operator', process.env.USER ?? 'operator')
+  .description('Create an account with a one-time password (must be changed, and MFA enrolled, at first sign-in)')
+  .action(async (o: { username: string; displayName: string; roles: string; by: string }) => withPool(async (pool) => {
+    const { hashPassword } = await import('./web/auth.js');
+    const { generateTemporaryPassword } = await import('./web/routes/auth.js');
+    const { ROLES } = await import('./web/http.js');
+    const roles = o.roles.split(',').map((r) => r.trim()).filter(Boolean);
+    const bad = roles.find((r) => !(ROLES as readonly string[]).includes(r));
+    if (bad) throw new Error(`unknown role: ${bad}`);
+    const temp = generateTemporaryPassword();
+    const id = randomUUID();
+    await pool.query(`INSERT INTO users (id, username, display_name, password_hash, roles, must_change_password, created_by) VALUES ($1,$2,$3,$4,$5,true,$6)`,
+      [id, o.username.toLowerCase(), o.displayName, await hashPassword(temp), roles, o.by]);
+    await audit(pool, o.by, 'user_created', { username: o.username.toLowerCase(), roles, via: 'cli' }, { actorKind: 'operator', objectType: 'user', objectId: id, outcome: 'ok' });
+    print({ id, username: o.username.toLowerCase(), roles, temporary_password: temp });
+  }));
+users.command('reset')
+  .argument('<username>')
+  .option('--reset-mfa', 'also remove the enrolled TOTP device')
+  .option('--by <actor>', 'operator', process.env.USER ?? 'operator')
+  .description('Issue a new one-time password and revoke all sessions')
+  .action(async (username: string, o: { resetMfa?: boolean; by: string }) => withPool(async (pool) => {
+    const { hashPassword } = await import('./web/auth.js');
+    const { generateTemporaryPassword } = await import('./web/routes/auth.js');
+    const temp = generateTemporaryPassword();
+    const r = await pool.query<{ id: string }>(
+      `UPDATE users SET password_hash = $2, must_change_password = true, failed_logins = 0, locked_until = NULL, disabled_at = NULL,
+          totp_enabled = CASE WHEN $3 THEN false ELSE totp_enabled END, totp_secret = CASE WHEN $3 THEN NULL ELSE totp_secret END
+        WHERE username = $1 RETURNING id`, [username.toLowerCase(), await hashPassword(temp), Boolean(o.resetMfa)]);
+    if (!r.rows[0]) throw new Error('user not found');
+    await pool.query(`UPDATE user_sessions SET revoked_at = now(), revoked_reason = 'credentials_reset' WHERE user_id = $1 AND revoked_at IS NULL`, [r.rows[0].id]);
+    await audit(pool, o.by, 'user_credentials_reset', { username, reset_mfa: Boolean(o.resetMfa), via: 'cli' }, { actorKind: 'operator', objectType: 'user', objectId: r.rows[0].id, outcome: 'ok' });
+    print({ username, temporary_password: temp });
+  }));
+users.command('list').action(async () => withPool(async (pool) => {
+  print((await pool.query('SELECT username, display_name, roles, totp_enabled, disabled_at, created_at FROM users ORDER BY username')).rows);
+}));
 
 const backup = program.command('backup').description('Record and report backup facts (the backup itself runs scripts/backup.sh)');
 backup.command('record').requiredOption('--destination <text>').requiredOption('--independent <yes|no>').option('--note <text>', '', '')
