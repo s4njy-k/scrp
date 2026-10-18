@@ -116,7 +116,7 @@ describe.skipIf(!hasDb || !BROWSERS_AVAILABLE)('analyst console in a browser', (
     expect(await page.locator('#main .chips').first().textContent()).toContain('suspicious');
     await page.locator('.compare figure').nth(1).waitFor();
     await page.locator('.compare').scrollIntoViewIfNeeded(); // images load lazily when visible
-    await page.waitForFunction(() => [...document.querySelectorAll('.compare img')].every((i) => (i as HTMLImageElement).naturalWidth > 0), undefined, { timeout: 15_000 });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.compare img')).every((i) => (i as HTMLImageElement).naturalWidth > 0), undefined, { timeout: 15_000 });
     expect(await page.locator('.compare figcaption').allTextContents()).toEqual([expect.stringContaining('desktop'), expect.stringContaining('mobile')]);
     await visit(`#/evidence/${attemptId}`, /Evidence record/);
     expect(await page.locator('.banner.info').first().textContent()).toContain('match');

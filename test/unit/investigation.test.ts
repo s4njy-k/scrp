@@ -103,6 +103,21 @@ describe('extended extraction (provenance, signals, network-aware validation)', 
   });
 });
 
+describe('payment gateway merchant references', () => {
+  it('extracts gateway merchant candidates with the gateway named, and ignores look-alike strings', () => {
+    const html = `<script>var options = { key: "rzp_live_AbCdEf12345678", amount: 49900 };</script>
+      <a href="https://rzp.io/l/refund-desk">Pay fee</a> <a href="https://pages.razorpay.com/kyc-update">KYC</a>
+      <a href="https://paytm.me/p?mid=FAKEMID1234567890123&amp;orderId=1">Paytm</a>
+      <a href="https://payments.cashfree.com/forms/processing-fee">Cashfree</a> <a href="https://www.instamojo.com/@refunddesk">Instamojo</a>
+      not-a-key rzp_live_short and mid=ABCDEFGH123 outside any Paytm link`;
+    const found = extractFromText(src(html, { displayContext: 'resource_string', method: 'attribute' })).filter((i) => i.fieldType === 'payment_gateway_id');
+    expect(found.map((i) => i.normalisedValue).sort()).toEqual([
+      'cashfree_form:processing-fee', 'instamojo:refunddesk', 'paytm_mid:FAKEMID1234567890123', 'razorpay_key:rzp_live_AbCdEf12345678', 'razorpay_page:kyc-update', 'razorpay_page:refund-desk',
+    ]);
+    expect(found.every((i) => i.validation === 'unvalidated' && /not verified with the gateway/.test(i.note ?? ''))).toBe(true);
+  });
+});
+
 describe('status fields stay distinct', () => {
   it('maps processing state and outcome to an explicit acquisition chip', () => {
     expect(acquisitionChip({ state: 'COMPLETE', outcome: 'CONTENT_CAPTURED', classification: 'content_captured' })).toBe('content_captured');

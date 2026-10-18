@@ -103,8 +103,8 @@ async function reportTargets(db: Queryable, root: string, noticeId: string): Pro
     }
     const ids = (await db.query<{ field_type: string; value: string; method: string }>(
       `SELECT DISTINCT field_type, COALESCE(value_key, normalised_value) AS value, method FROM identifiers
-        WHERE attempt_id = ANY($1::uuid[]) AND NOT signal_only AND validation_state <> 'format_invalid' AND display_context <> 'resource_string'
-          AND field_type IN ('upi_vpa','upi_uri','phone','whatsapp','telegram','email','bank_account','ifsc','crypto_btc','crypto_eth','crypto_tron','app_store_link','apk_link')
+        WHERE attempt_id = ANY($1::uuid[]) AND NOT signal_only AND validation_state <> 'format_invalid' AND (display_context <> 'resource_string' OR field_type = 'payment_gateway_id')
+          AND field_type IN ('upi_vpa','upi_uri','phone','whatsapp','telegram','email','bank_account','ifsc','crypto_btc','crypto_eth','crypto_tron','app_store_link','apk_link','payment_gateway_id')
         ORDER BY field_type LIMIT 30`, [t.evidence_attempts],
     )).rows;
     out.push({ url: t.url, registrable_domain: t.registrable_domain, legal_ground: t.legal_ground, evidence, identifiers: ids });

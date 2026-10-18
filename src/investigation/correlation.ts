@@ -23,6 +23,7 @@ const FIELD_WEIGHT: Record<string, { weight: number; strength: 'strong' | 'mediu
   gstin: { weight: 2, strength: 'medium', edge: 'claimed_identity' },
   chat_widget_id: { weight: 2, strength: 'medium', edge: 'shared_widget' },
   apk_link: { weight: 2, strength: 'medium', edge: 'distributes_app' },
+  payment_gateway_id: { weight: 3, strength: 'medium', edge: 'gateway_merchant_candidate' },
   app_store_link: { weight: 1, strength: 'weak', edge: 'distributes_app' },
   analytics_id: { weight: 1, strength: 'weak', edge: 'shared_analytics_id' },
   adsense_id: { weight: 1, strength: 'weak', edge: 'shared_analytics_id' },
@@ -50,7 +51,7 @@ export async function relatedTargets(db: Queryable, targetId: number, scope: { u
     `WITH mine AS (
        SELECT DISTINCT i.field_type, COALESCE(i.value_key, i.normalised_value) AS value FROM identifiers i
         WHERE i.target_id = $1 AND i.field_type = ANY($2::text[]) AND i.validation_state <> 'format_invalid'
-          AND (i.display_context <> 'resource_string' OR i.field_type IN ('analytics_id','adsense_id','chat_widget_id','dom_template_hash','apk_link'))),
+          AND (i.display_context <> 'resource_string' OR i.field_type IN ('analytics_id','adsense_id','chat_widget_id','dom_template_hash','apk_link','payment_gateway_id'))),
      visible AS (
        SELECT j.id FROM jobs j WHERE $4::boolean OR EXISTS (SELECT 1 FROM job_case_links l JOIN cases c ON c.case_ref = l.case_ref JOIN case_members m ON m.case_id = c.id WHERE l.job_id = j.id AND m.user_id = $3::uuid)),
      freq AS (

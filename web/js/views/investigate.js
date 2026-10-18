@@ -8,7 +8,7 @@ const FIELD_LABEL = {
   bank_account: 'Bank account (candidate)', ifsc: 'IFSC', crypto_btc: 'Bitcoin', crypto_eth: 'EVM address', crypto_tron: 'TRON', social_profile: 'Social profile',
   form_action: 'Form destination', api_endpoint: 'API endpoint', analytics_id: 'Analytics ID (signal)', adsense_id: 'AdSense ID (signal)', chat_widget_id: 'Chat widget (signal)',
   app_store_link: 'App store link', apk_link: 'APK download link', brand_claim: 'Brand claim (signal)', sensitive_form: 'Sensitive form field', dom_template_hash: 'Template hash (signal)',
-  business_identity: 'Claimed identity', gstin: 'GSTIN (format only)', cin: 'CIN (format only)', fraud_claim_text: 'Lure phrase (signal)',
+  payment_gateway_id: 'Payment gateway merchant (candidate)', business_identity: 'Claimed identity', gstin: 'GSTIN (format only)', cin: 'CIN (format only)', fraud_claim_text: 'Lure phrase (signal)',
 };
 
 export async function investigateView(main, targetId) {

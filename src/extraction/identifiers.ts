@@ -13,12 +13,12 @@ export type FieldType =
   | 'email' | 'phone' | 'whatsapp' | 'telegram' | 'social_profile' | 'upi_vpa' | 'upi_uri' | 'qr_payload'
   | 'bank_account' | 'ifsc' | 'crypto_btc' | 'crypto_eth' | 'crypto_tron' | 'form_action' | 'api_endpoint'
   | 'analytics_id' | 'business_identity' | 'gstin' | 'cin' | 'fraud_claim_text'
-  | 'adsense_id' | 'chat_widget_id' | 'app_store_link' | 'apk_link' | 'brand_claim' | 'sensitive_form' | 'dom_template_hash';
+  | 'adsense_id' | 'chat_widget_id' | 'app_store_link' | 'apk_link' | 'brand_claim' | 'sensitive_form' | 'dom_template_hash' | 'payment_gateway_id';
 
 export const ALL_FIELDS: FieldType[] = [
   'email', 'phone', 'whatsapp', 'telegram', 'social_profile', 'upi_vpa', 'upi_uri', 'qr_payload', 'bank_account', 'ifsc',
   'crypto_btc', 'crypto_eth', 'crypto_tron', 'form_action', 'api_endpoint', 'analytics_id', 'business_identity', 'gstin', 'cin', 'fraud_claim_text',
-  'adsense_id', 'chat_widget_id', 'app_store_link', 'apk_link', 'brand_claim', 'sensitive_form', 'dom_template_hash',
+  'adsense_id', 'chat_widget_id', 'app_store_link', 'apk_link', 'brand_claim', 'sensitive_form', 'dom_template_hash', 'payment_gateway_id',
 ];
 
 /** Fields that are operator/infrastructure SIGNALS only: never treated as identity or used alone for attribution. */
@@ -26,7 +26,7 @@ export const SIGNAL_ONLY_FIELDS: ReadonlySet<FieldType> = new Set<FieldType>([
   'analytics_id', 'adsense_id', 'chat_widget_id', 'dom_template_hash', 'business_identity', 'brand_claim', 'fraud_claim_text', 'api_endpoint',
 ]);
 
-export const EXTRACTOR_VERSION = 'extract-2026.10.2';
+export const EXTRACTOR_VERSION = 'extract-2026.10.3';
 
 /** Heuristic confidence for a finding (provenance quality, not a probability of fraud). */
 export function confidenceFor(i: Pick<Identifier, 'method' | 'validation' | 'displayContext'>): number {
@@ -98,6 +98,19 @@ const SOCIAL_RE = /https?:\/\/(?:www\.|m\.)?(facebook\.com|fb\.com|instagram\.co
 const GA_RE = /\b(G-[A-Z0-9]{6,12}|UA-\d{4,10}-\d{1,4}|GTM-[A-Z0-9]{4,9}|AW-\d{6,12})\b/g;
 const FBPIXEL_RE = /fbq\(\s*['"]init['"]\s*,\s*['"](\d{12,17})['"]/g;
 const ADSENSE_RE = /\bca-pub-\d{16}\b/gi;
+/**
+ * Payment-gateway merchant references as published by the gateways themselves
+ * (checkout key IDs, hosted payment pages, merchant IDs in payment links).
+ * Candidates only: aggregators, sub-merchants and shared test keys mean a match
+ * is a lead for a lawful request to the gateway, never proof of the operator.
+ */
+const PAYMENT_GATEWAYS: [RegExp, string, string][] = [
+  [/\brzp_(?:live|test)_[A-Za-z0-9]{14}\b/g, 'razorpay_key', 'Razorpay checkout key ID (public); identifies a merchant account at the gateway; test keys are not live accounts'],
+  [/\b(?:rzp\.io\/(?:l|i|rzp)|pages\.razorpay\.com)\/([A-Za-z0-9_-]{3,64})/g, 'razorpay_page', 'Razorpay hosted payment page/link'],
+  [/\bpaytm\.(?:com|in|me)\/[^\s"'<>]*?[?&]mid=([A-Za-z0-9]{8,24})\b/gi, 'paytm_mid', 'Paytm merchant ID in a Paytm link'],
+  [/\bpayments\.cashfree\.com\/forms\/([A-Za-z0-9_-]{3,64})/g, 'cashfree_form', 'Cashfree hosted payment form'],
+  [/\binstamojo\.com\/@([A-Za-z0-9_.-]{3,64})/g, 'instamojo', 'Instamojo payment handle'],
+];
 const CHAT_WIDGETS: [RegExp, string][] = [
   [/embed\.tawk\.to\/([a-f0-9]{24}(?:\/[a-z0-9]{6,12})?)/gi, 'tawk'],
   [/CRISP_WEBSITE_ID\s*=\s*["']([0-9a-f-]{36})["']/gi, 'crisp'],
@@ -219,6 +232,9 @@ export function extractFromText(src: TextSource): Identifier[] {
   for (const m of text.matchAll(ADSENSE_RE)) push(out, src, 'adsense_id', m[0], m[0].toLowerCase(), 'unvalidated', m.index, 'operator signal only');
   for (const [re, vendor] of CHAT_WIDGETS) {
     for (const m of text.matchAll(re)) push(out, src, 'chat_widget_id', m[0], `${vendor}:${m[1]}`, 'unvalidated', m.index, 'operator signal only; widget accounts may be shared or resold');
+  }
+  for (const [re, gw, note] of PAYMENT_GATEWAYS) {
+    for (const m of text.matchAll(re)) push(out, src, 'payment_gateway_id', m[0], `${gw}:${m[1] ?? m[0]}`, 'unvalidated', m.index, `${note}; candidate merchant reference, not verified with the gateway`);
   }
   for (const m of text.matchAll(PLAY_RE)) push(out, src, 'app_store_link', m[0], `play:${m[1]}`, 'unvalidated', m.index, 'package name can be spoofed; verified signer requires the APK bytes');
   for (const m of text.matchAll(APPLE_RE)) push(out, src, 'app_store_link', m[0], `appstore:id${m[1]}`, 'unvalidated', m.index);
