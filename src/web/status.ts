@@ -23,6 +23,7 @@ export function acquisitionChip(j: JobStatusInput): AcquisitionChip {
   if (c === 'parked_domain') return 'parked';
   if (c === 'hosting_suspended') return 'suspended';
   if (c === 'egress_denied') return 'egress_denied';
+  if (c === 'isp_block_notice') return 'blocked';
   if (c === 'timeout' || c === 'navigation_timeout_salvaged') return j.state === 'PARTIAL' ? 'partial' : 'timed_out';
   switch (j.outcome) {
     case 'CONTENT_CAPTURED':

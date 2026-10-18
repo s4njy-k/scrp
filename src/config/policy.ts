@@ -212,6 +212,11 @@ export const EnrichmentSchema = z
     cache_hours: positiveNumber.default(24),
     timeout_seconds: positiveNumber.max(60).default(10),
     max_response_kib: positiveInt.max(10_240).default(512),
+    targets_per_cycle: positiveInt.max(100).default(5),
+    rdap_bootstrap_dns_url: z.string().url().default('https://data.iana.org/rdap/dns.json'),
+    rdap_bootstrap_ipv4_url: z.string().url().default('https://data.iana.org/rdap/ipv4.json'),
+    rdap_bootstrap_ipv6_url: z.string().url().default('https://data.iana.org/rdap/ipv6.json'),
+    ct_search_url: z.string().url().default('https://crt.sh/'),
   })
   .strict()
   .prefault({});

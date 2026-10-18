@@ -859,6 +859,32 @@
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 10240
+        },
+        "targets_per_cycle": {
+          "default": 5,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        },
+        "rdap_bootstrap_dns_url": {
+          "default": "https://data.iana.org/rdap/dns.json",
+          "type": "string",
+          "format": "uri"
+        },
+        "rdap_bootstrap_ipv4_url": {
+          "default": "https://data.iana.org/rdap/ipv4.json",
+          "type": "string",
+          "format": "uri"
+        },
+        "rdap_bootstrap_ipv6_url": {
+          "default": "https://data.iana.org/rdap/ipv6.json",
+          "type": "string",
+          "format": "uri"
+        },
+        "ct_search_url": {
+          "default": "https://crt.sh/",
+          "type": "string",
+          "format": "uri"
         }
       },
       "required": [
@@ -869,7 +895,12 @@
         "certificate_transparency",
         "cache_hours",
         "timeout_seconds",
-        "max_response_kib"
+        "max_response_kib",
+        "targets_per_cycle",
+        "rdap_bootstrap_dns_url",
+        "rdap_bootstrap_ipv4_url",
+        "rdap_bootstrap_ipv6_url",
+        "ct_search_url"
       ],
       "additionalProperties": false
     }

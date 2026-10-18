@@ -9,6 +9,7 @@ import type { Pool } from '../../src/db/pool.js';
 import { importText } from '../../src/importer/importer.js';
 import { relatedTargets } from '../../src/investigation/correlation.js';
 import { recordRiskAssessment } from '../../src/investigation/risk.js';
+import { detectReappearance } from '../../src/monitoring/monitor.js';
 import { freshDb, hasDb, testPolicy } from '../helpers.js';
 
 describe.skipIf(!hasDb)('correlation and risk over the ledger', () => {
@@ -73,5 +74,15 @@ describe.skipIf(!hasDb)('correlation and risk over the ledger', () => {
     expect(after.score).toBeGreaterThan(before.score);
     expect((await pool.query('SELECT count(*)::int AS n FROM risk_assessments WHERE target_id = $1', [target.t1])).rows[0].n).toBe(2);
     await expect(pool.query('UPDATE risk_assessments SET score = 0')).rejects.toThrow(/append-only/);
+  });
+
+  it('raises a reappearance alert when a new domain shows the payee of a judged-malicious site', async () => {
+    // t2 is judged likely_malicious above; t1 (different domain) shares payee and WhatsApp.
+    expect(await detectReappearance(pool, policy, attempt.t1!)).toBe(1);
+    const alert = (await pool.query('SELECT source_target_id, new_target_id, strength, shared FROM reappearance_alerts')).rows[0];
+    expect(alert).toMatchObject({ source_target_id: target.t2, new_target_id: target.t1, strength: 'strong_possible' });
+    expect(alert.shared).toEqual(expect.arrayContaining(['upi_vpa:payee@ybl', 'whatsapp:+919876543210']));
+    // Analytics-only overlap never raises an alert.
+    expect(await detectReappearance(pool, policy, attempt.t3!)).toBe(0);
   });
 });

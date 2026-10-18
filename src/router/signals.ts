@@ -137,6 +137,49 @@ export function detectChallenge(input: {
   return { challenge: strong || weakChallenge, vendor: vendor ?? (weakChallenge ? 'captcha_widget' : null), signals };
 }
 
+export interface PlaceholderSignals {
+  kind: 'parked' | 'suspended' | 'isp_block' | null;
+  signals: string[];
+}
+
+// Strong signatures: registrar/parking providers, hosting suspension pages and Indian
+// ISP blocking notices. A placeholder page is a valid observation of what the site
+// showed, not the reported content, and never evidence the origin is offline.
+const PARKED_STRONG: [RegExp, string][] = [
+  [/sedoparking\.com|parkingcrew\.net|bodis\.com\/|parklogic|above\.com\/marketplace|dsparking/i, 'parking_provider_script'],
+  [/this domain (?:name )?(?:is|may be) for sale|buy this domain|domain is for sale|make an offer on this domain/i, 'domain_for_sale'],
+  [/this domain (?:is|has been) parked|parked (?:free|domain)|domain parking/i, 'domain_parked'],
+  [/this domain (?:name )?has expired|domain (?:has )?expired.{0,40}renew|renew (?:this|your) domain/i, 'domain_expired'],
+  [/hugedomains\.com|afternic\.com|dan\.com\/buy-domain|sav\.com.{0,40}for sale/i, 'domain_marketplace'],
+];
+const SUSPENDED_STRONG: [RegExp, string][] = [
+  [/account (?:has been )?suspended|this account has been suspended/i, 'account_suspended'],
+  [/suspendedpage\.cgi|cgi-sys\/suspendedpage/i, 'cpanel_suspended_page'],
+  [/(?:website|site|domain) (?:has been |is )?(?:suspended|disabled|deactivated)(?: by| due| for|\.|$)/i, 'site_suspended'],
+  [/serverhold|clienthold|suspended by the registry/i, 'registry_hold'],
+];
+const ISP_BLOCK_STRONG: [RegExp, string][] = [
+  [/has been blocked(?:,)? as per (?:the )?directions? (?:received )?from|blocked under (?:the )?instructions of the competent (?:government )?authority/i, 'india_blocking_notice'],
+  [/department of telecommunications.{0,120}blocked|blocked.{0,120}department of telecommunications/i, 'dot_blocking_notice'],
+  [/blocked as per (?:the )?(?:order|direction)s? of (?:the )?(?:hon'?ble )?(?:court|government)/i, 'order_blocking_notice'],
+];
+
+/** Parked, suspended and ISP-blocking placeholder pages (checklist §2, §8). */
+export function detectPlaceholderPage(input: { html?: string | null; text?: string | null; title?: string | null }): PlaceholderSignals {
+  const body = `${input.title ?? ''}\n${input.text ?? ''}\n${(input.html ?? '').slice(0, 300_000)}`;
+  const textLength = (input.text ?? '').trim().length;
+  const hits = (list: [RegExp, string][]) => list.filter(([re]) => re.test(body)).map(([, v]) => v);
+  const isp = hits(ISP_BLOCK_STRONG);
+  if (isp.length) return { kind: 'isp_block', signals: isp };
+  // Placeholder pages are short: a long page that merely mentions "suspended" is not one.
+  if (textLength > 4000) return { kind: null, signals: [] };
+  const suspended = hits(SUSPENDED_STRONG);
+  if (suspended.length) return { kind: 'suspended', signals: suspended };
+  const parked = hits(PARKED_STRONG);
+  if (parked.length) return { kind: 'parked', signals: parked };
+  return { kind: null, signals: [] };
+}
+
 /** A login/authentication wall: password field or explicit auth status. */
 export function detectAuthWall(input: { status?: number | null; html?: string | null; hasPasswordField?: boolean; headers?: Record<string, string | string[] | undefined> }): string[] {
   const s: string[] = [];

@@ -6,6 +6,7 @@ import { caseRoutes } from './routes/cases.js';
 import { evidenceRoutes } from './routes/evidence.js';
 import { investigateRoutes } from './routes/investigate.js';
 import { jobRoutes } from './routes/jobs.js';
+import { monitoringRoutes } from './routes/monitoring.js';
 
 export function buildApp(deps: AppDeps): ApiApp {
   const app = new ApiApp(deps);
@@ -21,6 +22,7 @@ export function buildApp(deps: AppDeps): ApiApp {
     ...evidenceRoutes(d),
     ...investigateRoutes(d),
     ...actionRoutes(d),
+    ...monitoringRoutes(d),
   );
   return app;
 }

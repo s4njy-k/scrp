@@ -171,3 +171,8 @@ enrichment:
   cache_hours: 24
   timeout_seconds: 10
   max_response_kib: 512
+  targets_per_cycle: 5
+  rdap_bootstrap_dns_url: https://data.iana.org/rdap/dns.json
+  rdap_bootstrap_ipv4_url: https://data.iana.org/rdap/ipv4.json
+  rdap_bootstrap_ipv6_url: https://data.iana.org/rdap/ipv6.json
+  ct_search_url: https://crt.sh/

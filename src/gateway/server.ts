@@ -10,7 +10,8 @@
  */
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect as netConnect, isIP, type Socket } from 'node:net';
-import { lookup } from 'node:dns/promises';
+import dnsPromises, { lookup } from 'node:dns/promises';
+import ipaddr from 'ipaddr.js';
 import type { Duplex } from 'node:stream';
 import { logger, bounded } from '../observability/logger.js';
 import { classifyAddress, classifyHostname, type AddressVerdict } from './policy.js';
@@ -29,6 +30,20 @@ export interface GatewayOptions {
   resolve?: (host: string) => Promise<string[]>;
   /** Injectable for tests. Defaults to classifyAddress with extraDenyCidrs. */
   classify?: (address: string) => AddressVerdict;
+  /** Injectable for tests: record lookups for the enrichment endpoint (/__dns). */
+  dnsRecords?: (name: string, type: DnsRecordType) => Promise<unknown[]>;
+}
+
+export const DNS_RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SOA', 'CAA', 'PTR'] as const;
+export type DnsRecordType = (typeof DNS_RECORD_TYPES)[number];
+
+/** Names that must never be resolved for enrichment (internal namespaces, single labels). */
+export function enrichmentNameRefused(name: string): string | null {
+  const n = name.toLowerCase().replace(/\.$/, '');
+  if (!/^[a-z0-9.-]{1,253}$/.test(n) || n.split('.').some((l) => l.length === 0 || l.length > 63)) return 'invalid_name';
+  if (!n.includes('.')) return 'single_label_name';
+  if (/(^|\.)(localhost|local|internal|intranet|lan|home|corp|home\.arpa|localdomain)$/.test(n)) return 'internal_namespace';
+  return null;
 }
 
 export type EgressError =
@@ -376,8 +391,38 @@ export class EgressGateway {
       res.end(JSON.stringify({ host: d.host, port: d.port, allowed: d.allowed, error: d.error ?? null, reason: d.reason ?? null, addresses: d.addresses ?? [] }));
       return;
     }
+    if (u.pathname === '/__dns') {
+      // Bounded record lookups for asynchronous infrastructure enrichment. The answer is
+      // what this gateway's resolver observed, at this time, from this vantage.
+      const type = (u.searchParams.get('type') ?? 'A').toUpperCase() as DnsRecordType;
+      let name = u.searchParams.get('name') ?? '';
+      if (!DNS_RECORD_TYPES.includes(type)) return this.json(res, 400, { error: 'unsupported_type' });
+      if (type === 'PTR') {
+        try {
+          name = ipToPtr(name);
+        } catch {
+          return this.json(res, 400, { error: 'invalid_address' });
+        }
+      } else {
+        const refused = enrichmentNameRefused(name);
+        if (refused) return this.json(res, 400, { error: refused });
+      }
+      try {
+        const records = await withTimeout((this.opts.dnsRecords ?? systemDnsRecords)(name, type), this.opts.dnsTimeoutMs, 'dns');
+        return this.json(res, 200, { name, type, records: records.slice(0, 100), observed_at: new Date().toISOString() });
+      } catch (err) {
+        const code = (err as { code?: string }).code ?? '';
+        const error = code === 'ENOTFOUND' || code === 'ENODATA' ? 'no_records' : code === 'ETIMEOUT' ? 'dns_timeout' : 'dns_error';
+        return this.json(res, 200, { name, type, records: [], error, observed_at: new Date().toISOString() });
+      }
+    }
     res.writeHead(404, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'not_found' }));
+  }
+
+  private json(res: ServerResponse, status: number, body: unknown): void {
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(body));
   }
 
   listen(): Promise<{ port: number }> {
@@ -415,6 +460,28 @@ export class EgressGateway {
       this.server.close(() => resolve());
     });
   }
+}
+
+export async function systemDnsRecords(name: string, type: DnsRecordType): Promise<unknown[]> {
+  const r = new dnsPromises.Resolver({ timeout: 4000, tries: 2 });
+  switch (type) {
+    case 'A': return r.resolve4(name);
+    case 'AAAA': return r.resolve6(name);
+    case 'CNAME': return r.resolveCname(name);
+    case 'MX': return r.resolveMx(name);
+    case 'NS': return r.resolveNs(name);
+    case 'TXT': return (await r.resolveTxt(name)).map((parts) => parts.join('').slice(0, 1000));
+    case 'SOA': return [await r.resolveSoa(name)];
+    case 'CAA': return r.resolveCaa(name);
+    case 'PTR': return r.resolvePtr(name);
+  }
+}
+
+function ipToPtr(ip: string): string {
+  const addr = ipaddr.parse(ip);
+  if (addr.kind() === 'ipv4') return `${(addr.toByteArray() as number[]).reverse().join('.')}.in-addr.arpa`;
+  const hex = (addr as ipaddr.IPv6).toNormalizedString().split(':').map((h) => h.padStart(4, '0')).join('');
+  return `${[...hex].reverse().join('.')}.ip6.arpa`;
 }
 
 export function gatewayOptionsFromEnv(env = process.env): GatewayOptions {

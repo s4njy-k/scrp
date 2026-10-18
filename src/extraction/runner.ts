@@ -19,6 +19,7 @@ import {
 } from './identifiers.js';
 import { makeThumbnail } from './thumbnail.js';
 import { recordRiskAssessment } from '../investigation/risk.js';
+import { detectReappearance } from '../monitoring/monitor.js';
 import { decodeQrFromPng } from './qr.js';
 import { ocrAvailable, ocrImage } from './ocr.js';
 import { parseTargetInput, type TargetCandidate } from '../importer/url.js';
@@ -305,6 +306,7 @@ export async function runExtraction(pool: Pool, policy: Policy, root: string, at
 
   // Explainable triage aid, recomputed for every extraction (append-only versions).
   await recordRiskAssessment(pool, policy.governance.risk_policy_version, attempt.id).catch((err: Error) => logger.warn({ attempt: attempt.id, err: err.message }, 'risk assessment failed'));
+  await detectReappearance(pool, policy, attempt.id).catch((err: Error) => logger.warn({ attempt: attempt.id, err: err.message }, 'reappearance check failed'));
 
   // Only pages whose content was actually reached are worth expanding; links on a
   // challenge, block or error page would spend budget on the same refusal.

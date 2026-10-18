@@ -11,6 +11,7 @@ import { formatIst } from '../../evidence/time.js';
 import { DECISION_VERDICT, REASON_CODES, suppressionState } from '../../investigation/decisions.js';
 import { relatedTargets } from '../../investigation/correlation.js';
 import { domainContext, findLookalikes } from '../../investigation/brands.js';
+import { suggestAddressees } from '../../enrichment/enrich.js';
 import { assertSafeRelative } from '../../storage/artifactStore.js';
 import { assertAttemptAccess, assertTargetAccess, caseByRef, hasRole, jobVisibleSql, seesAllCases } from '../authz.js';
 import { badRequest, conflict, forbidden, queryInt, reply, requireIntId, type Ctx, type RouteSpec } from '../http.js';
@@ -154,6 +155,33 @@ export function investigateRoutes(d: RouteDeps): RouteSpec[] {
           items,
           rule: 'Grouped as a possible relationship only with two or more distinct uncommon identifiers (at least one strong). Shared CDN/IP, registrar, analytics IDs, favicons or templates alone never group sites. Frequency counts are within your case scope.',
         };
+      },
+    },
+    {
+      method: 'GET', path: '/api/v1/targets/:id/addressees', auth: 'full',
+      handler: async (ctx) => {
+        const targetId = requireIntId(ctx.params.id);
+        await assertTargetAccess(d.pool, ctx.user!, targetId);
+        const t = (await d.pool.query<{ hostname_ascii: string; registrable_domain: string }>('SELECT hostname_ascii, registrable_domain FROM targets WHERE id = $1', [targetId])).rows[0]!;
+        const rows = (await d.pool.query<{ source: string; status: string; data: Record<string, unknown>; subject: string; retrieved_at: Date }>(
+          `SELECT DISTINCT ON (source) source, status, data, subject, retrieved_at FROM enrichment_results
+            WHERE subject = ANY($1::text[]) OR (source = 'rdap_ip' AND subject IN (SELECT jsonb_array_elements_text(data->'host_A') FROM enrichment_results WHERE subject = $2 AND source = 'dns'))
+            ORDER BY source, retrieved_at DESC`, [[t.hostname_ascii, t.registrable_domain], t.hostname_ascii],
+        )).rows;
+        const apps = (await d.pool.query<{ v: string }>(`SELECT DISTINCT COALESCE(value_key, normalised_value) AS v FROM identifiers WHERE target_id = $1 AND field_type = 'app_store_link'`, [targetId])).rows.map((r) => r.v);
+        return { addressees: suggestAddressees(rows, apps), sources: rows.map((r) => ({ source: r.source, status: r.status, subject: r.subject, retrieved_at: r.retrieved_at })),
+          note: 'Suggestions from enrichment; verify each recipient before drafting. Registrar, registry, host, CDN and app distributor are different addressees with different powers.' };
+      },
+    },
+    {
+      method: 'POST', path: '/api/v1/targets/:id/enrich', auth: 'full', roles: ['analyst', 'admin'],
+      handler: async (ctx) => {
+        const targetId = requireIntId(ctx.params.id);
+        await assertTargetAccess(d.pool, ctx.user!, targetId, 'investigator');
+        await d.pool.query('UPDATE targets SET enrichment_done_at = NULL, enrichment_requested_at = NULL WHERE id = $1', [targetId]);
+        await d.pool.query(`UPDATE enrichment_results SET expires_at = now() WHERE subject IN (SELECT hostname_ascii FROM targets WHERE id = $1 UNION SELECT registrable_domain FROM targets WHERE id = $1) AND expires_at > now()`, [targetId]);
+        await auditCtx(d.pool, ctx, 'enrichment_refresh_requested', {}, { objectType: 'target', objectId: targetId });
+        return reply(202, { queued: true, note: 'Enrichment runs asynchronously after capture, through the egress gateway.' });
       },
     },
     {
