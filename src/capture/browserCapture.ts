@@ -19,7 +19,7 @@ import type { Policy } from '../config/policy.js';
 import { MiB } from '../config/policy.js';
 import type { AttemptWriter } from '../storage/artifactStore.js';
 import type { BrowserObservation } from '../router/router.js';
-import { classifyNetError, detectAuthWall, detectChallenge, parseRetryAfter } from '../router/signals.js';
+import { classifyNetError, detectAuthWall, detectChallenge, detectPlaceholderPage, parseRetryAfter } from '../router/signals.js';
 import type { DomainEdgeInput } from '../queue/queue.js';
 import { lookupViaGateway, type EgressConfig } from '../acquisition/egress.js';
 import { NetworkRecorder } from './networkRecorder.js';
@@ -146,6 +146,7 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
   let challengeResolved = false;
   let challenge = { challenge: false, signals: [] as string[] };
   let authSignals: string[] = [];
+  let placeholder: ReturnType<typeof detectPlaceholderPage> = { kind: null, signals: [] };
   let visibleTextLength = 0;
   let renderIncompat: string[] = [];
   let recorder: NetworkRecorder | null = null;
@@ -383,6 +384,7 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
         contentAppeared ||= st.text.trim().length > 0;
         authSignals = detectAuthWall({ status: currentStatus, hasPasswordField: st.hasPassword, headers: currentHeaders });
         renderIncompat = RENDER_INCOMPAT.test(st.text) ? ['page_text:browser_unsupported'] : [];
+        placeholder = detectPlaceholderPage({ html: st.html, text: st.text, title: st.title });
         if (challengeResolved) {
           challenge = detectChallenge({ html: st.html, title: st.title, visibleTextLength: st.text.length, frameUrls: st.frameUrls });
         }
@@ -411,6 +413,7 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
       missingRequired: [],
       visibleTextLength,
       retryAfterSeconds: parseRetryAfter(currentHeaders['retry-after'] ?? null),
+      placeholder,
     };
     if (args.signal.aborted) limitations.push('lease lost during capture: target activity stopped early');
     return { observation: result, finalUrl, edges: recorder.edges, userAgent, engineVersion, settings, limitations };

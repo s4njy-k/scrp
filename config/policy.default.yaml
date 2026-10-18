@@ -104,9 +104,75 @@ extraction:
   ocr_max_crops_per_attempt: 8
   ai_enabled: false
 retention:
-  # Days before routine expiry; null = never expires automatically. Case holds always win.
+  # Days before routine expiry; null = never expires automatically. Case holds always win,
+  # and attempts cited by an issued notice, a certificate or an open case are never disposed
+  # of by the routine job. Values other than transient triage must come from the approved
+  # records-retention schedule (blueprint v4 §27.2): do not invent a blanket period.
   classes:
+    transient_triage: 30
+    case_evidence: null
+    notice_issued: null
+    litigation_hold: null
+    # Pre-v4 class names, kept so existing jobs and imports stay valid.
     standard: 30
     extended: 180
     permanent: null
-  default_class: standard
+  default_class: transient_triage
+
+# ---- v4 extensions (blueprint v4 §29). All have defaults; listed here for review. ----
+web:
+  session_idle_minutes: 30
+  session_absolute_hours: 12
+  mfa_required: true
+  # Secure cookies work over https and over http://localhost (SSH tunnel). Never disable on a network listener.
+  cookie_secure: true
+  hsts: false
+  login_attempts_per_minute: 5
+  lockout_after_failed_logins: 10
+  lockout_minutes: 15
+  api_requests_per_second: 20
+  paginated_list_limit_default: 50
+  paginated_list_limit_max: 200
+  sse_max_connections: 50
+  sse_poll_ms: 2000
+  require_case_scope_for_sensitive_search: true
+  require_purpose_for_global_search: true
+  intake_max_rows: 5000
+  intake_max_mib: 10
+  upload_max_mib: 25
+  dashboard_aggregation_cache_seconds: 30
+  show_utc_and_ist: true
+governance:
+  # These safeguards are fixed by the schema; they cannot be switched off.
+  maker_checker_for_external_actions: true
+  external_notice_autosend_enabled: false
+  auto_takedown_enabled: false
+  certificate_autosign: false
+  analyst_review_required: true
+  false_positive_override_requires_new_evidence: true
+  section63_template_source_version: BSA-2023-Schedule-official
+  risk_policy_version: risk-rules-1
+monitoring:
+  actioned_target_revisit_enabled: true
+  max_auto_revisits_per_target_per_day: 2
+  default_interval_hours: 24
+  min_interval_hours: 6
+  max_rule_duration_days: 90
+  # Revisits run below first captures and pause under disk pressure.
+  revisit_priority: -10
+  notify_on_resurrection: true
+enrichment:
+  enabled: true
+  dns: true
+  tls: true
+  rdap: true
+  # crt.sh is a third-party service; enable only if approved.
+  certificate_transparency: false
+  cache_hours: 24
+  timeout_seconds: 10
+  max_response_kib: 512
+  targets_per_cycle: 5
+  rdap_bootstrap_dns_url: https://data.iana.org/rdap/dns.json
+  rdap_bootstrap_ipv4_url: https://data.iana.org/rdap/ipv4.json
+  rdap_bootstrap_ipv6_url: https://data.iana.org/rdap/ipv6.json
+  ct_search_url: https://crt.sh/

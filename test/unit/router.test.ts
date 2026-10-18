@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyBrowser, classifyHttp, decideAfterBrowser, decideAfterHttp, type BrowserObservation, type HttpObservation, type RouterJob } from '../../src/router/router.js';
-import { detectChallenge, detectJsShell, parseRetryAfter, classifyNetError } from '../../src/router/signals.js';
+import { detectChallenge, detectJsShell, detectPlaceholderPage, parseRetryAfter, classifyNetError } from '../../src/router/signals.js';
 import { canRunStage, attemptSecondsFor } from '../../src/router/budget.js';
 import { evaluateRequired, processingStateFor, type ManifestEntry } from '../../src/acquisition/contract.js';
 import { testPolicy } from '../helpers.js';
@@ -124,6 +124,29 @@ describe('browser routing', () => {
   it('rendering incompatibility selects Firefox once instead of an extra unconditional tier', () => {
     const o = brObs({ renderingIncompatibilitySignals: ['page_text:browser_unsupported'], visibleTextLength: 100 });
     expect(decideAfterBrowser(job({ stage: 'browser_primary', browser_attempts: 1 }), classifyBrowser(o), o, 20, policy, rand)).toMatchObject({ stage: 'browser_alternate' });
+  });
+});
+
+describe('parked, suspended and blocking-notice pages (checklist §2, §8)', () => {
+  it('recognises placeholder pages without misreading long pages that mention suspension', () => {
+    expect(detectPlaceholderPage({ text: 'This domain is for sale! Make an offer', html: '<script src="https://sedoparking.com/x.js">' }).kind).toBe('parked');
+    expect(detectPlaceholderPage({ text: 'Account Suspended. This Account has been suspended.' }).kind).toBe('suspended');
+    expect(detectPlaceholderPage({ text: 'The page you have requested has been blocked, as per the directions received from Department of Telecommunications' }).kind).toBe('isp_block');
+    expect(detectPlaceholderPage({ text: `${'News about suspended accounts. '.repeat(200)}` }).kind).toBeNull();
+    expect(detectPlaceholderPage({ text: 'Welcome to our refund desk' }).kind).toBeNull();
+  });
+  it('keeps placeholders as their own observations and a blocking notice as a vantage-specific block', () => {
+    const parked = brObs({ placeholder: { kind: 'parked', signals: ['domain_for_sale'] } });
+    expect(classifyBrowser(parked)).toMatchObject({ classification: 'parked_domain', outcome: 'CONTENT_CAPTURED' });
+    expect(decideAfterBrowser(job({ stage: 'browser_primary', browser_attempts: 1 }), classifyBrowser(parked), parked, 20, policy, rand)).toMatchObject({ kind: 'finish', state: 'COMPLETE' });
+    const blocked = brObs({ placeholder: { kind: 'isp_block', signals: ['india_blocking_notice'] } });
+    const c = classifyBrowser(blocked);
+    expect(c).toMatchObject({ classification: 'isp_block_notice', outcome: 'ACCESS_BLOCKED' });
+    expect(decideAfterBrowser(job({ stage: 'browser_primary', browser_attempts: 1 }), c, blocked, 20, policy, rand)).toMatchObject({ kind: 'finish', state: 'FAILED_FINAL' });
+    // Over HTTP an evidence job still captures the placeholder in the browser.
+    const h = classifyHttp(httpObs({ placeholder: { kind: 'suspended', signals: ['account_suspended'] } }));
+    expect(h.classification).toBe('hosting_suspended');
+    expect(decideAfterHttp(job(), h, 5, policy, rand)).toMatchObject({ kind: 'continue', stage: 'browser_primary' });
   });
 });
 

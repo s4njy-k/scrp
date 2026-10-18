@@ -8,7 +8,7 @@ import { request, type Dispatcher } from 'undici';
 import type { Policy } from '../config/policy.js';
 import { MiB } from '../config/policy.js';
 import type { AttemptWriter } from '../storage/artifactStore.js';
-import { classifyNetError, detectAuthWall, detectChallenge, detectJsShell, headerValue, htmlToText, parseRetryAfter } from '../router/signals.js';
+import { classifyNetError, detectAuthWall, detectChallenge, detectJsShell, detectPlaceholderPage, headerValue, htmlToText, parseRetryAfter } from '../router/signals.js';
 import type { HttpObservation } from '../router/router.js';
 import type { DomainEdgeInput } from '../queue/queue.js';
 import { lookupViaGateway, type EgressConfig } from './egress.js';
@@ -201,6 +201,7 @@ export async function runHttpTriage(args: {
     visibleTextLength: visibleText.length,
     expectedJson: args.expectedJson ?? false,
     retryAfterSeconds: parseRetryAfter(headerValue(finalHeaders, 'retry-after')),
+    placeholder: bodyText ? detectPlaceholderPage({ html: bodyText, text: visibleText }) : { kind: null, signals: [] },
   };
 
   const now = new Date().toISOString();

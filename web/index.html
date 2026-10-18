@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Cyber Web Collector</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar" id="topbar" hidden>
+    <div class="brand"><span class="logo" aria-hidden="true">◆</span> Cyber Web Collector</div>
+    <nav aria-label="Primary" id="nav"></nav>
+    <div class="who" id="who"></div>
+  </header>
+  <main id="main" tabindex="-1"><p class="muted pad">Loading…</p></main>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <noscript><p class="pad">This console needs JavaScript. No content is loaded from third parties.</p></noscript>
+</body>
+</html>

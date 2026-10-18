@@ -21,12 +21,23 @@ export const HELD_JOB_SQL = `EXISTS (
        AND (h.case_ref = j.case_ref
             OR h.case_ref IN (SELECT s.case_ref FROM job_sources js JOIN source_records s ON s.id = js.source_record_id WHERE js.job_id = j.id)))`;
 
+/**
+ * Evidence that something else depends on is never disposed of by the routine
+ * job (blueprint v4 §27.3): attempts cited by a non-withdrawn notice or
+ * certificate, and attempts of jobs linked to a case that is still open.
+ */
+export const CITED_ATTEMPT_SQL = `(
+    EXISTS (SELECT 1 FROM notice_targets nt JOIN notices n ON n.id = nt.notice_id WHERE a.id = ANY(nt.evidence_attempt_ids) AND n.state <> 'withdrawn')
+    OR EXISTS (SELECT 1 FROM certificates c WHERE a.id = ANY(c.attempt_ids) AND c.state <> 'withdrawn')
+    OR EXISTS (SELECT 1 FROM job_case_links l JOIN cases cs ON cs.case_ref = l.case_ref WHERE l.job_id = j.id AND cs.status = 'open'))`;
+
 export async function applyRetention(pool: Pool, policy: Policy, root: string, opts: { deleteEnabled: boolean; limit?: number }): Promise<{ eligible: number; deleted: number }> {
   if (policy.storage.delete_case_hold_artifacts !== false) throw new Error('delete_case_hold_artifacts must be false');
   const { rows } = await pool.query<{ id: string; artifact_dir: string; job_id: number }>(
     `SELECT a.id, a.artifact_dir, a.job_id FROM attempts a JOIN jobs j ON j.id = a.job_id
       WHERE a.expires_at IS NOT NULL AND a.expires_at < now() AND a.deleted_at IS NULL AND a.artifact_dir IS NOT NULL
         AND NOT (${HELD_JOB_SQL})
+        AND NOT (${CITED_ATTEMPT_SQL})
         -- Never delete while the job is still active.
         AND j.state NOT IN ('QUEUED','LEASED','CAPTURING','FINALISING','DEFERRED')
       ORDER BY a.expires_at LIMIT $1`,
@@ -40,7 +51,7 @@ export async function applyRetention(pool: Pool, policy: Policy, root: string, o
       continue;
     }
     // Re-check the hold inside the deletion step (a hold may have been placed meanwhile).
-    const hold = await pool.query(`SELECT 1 FROM jobs j WHERE j.id = $1 AND (${HELD_JOB_SQL})`, [r.job_id]);
+    const hold = await pool.query(`SELECT 1 FROM jobs j JOIN attempts a ON a.job_id = j.id WHERE j.id = $1 AND a.id = $2 AND ((${HELD_JOB_SQL}) OR (${CITED_ATTEMPT_SQL}))`, [r.job_id, r.id]);
     if (hold.rowCount) continue;
     // Record intent first so an interrupted deletion is still visible in the audit trail.
     await audit(pool, 'retention', 'attempt_deletion_started', { dir: r.artifact_dir }, { jobId: r.job_id, attemptId: r.id });

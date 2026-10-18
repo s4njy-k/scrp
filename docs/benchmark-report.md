@@ -41,7 +41,7 @@ bundles. Expected useful visits are attempts × measured yield `y`. At 3,000 bun
 | Metric | p50 | p95 | Max | Cap |
 |---|---|---|---|---|
 | CPU (collector aggregate) | | | | ~2 vCPU |
-| RSS browser-engine | | | | 5.5 GiB |
+| RSS browser-engine | | | | 5 GiB |
 | I/O wait / steal (`vmstat`) | | | | — |
 | Artifact growth GB/day | | | | 80 GB soft |
 

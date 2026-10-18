@@ -16,7 +16,8 @@
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
     "schema": "tsx scripts/emit-policy-schema.ts",
-    "cli": "tsx src/cli.ts"
+    "cli": "tsx src/cli.ts",
+    "openapi": "tsx scripts/emit-openapi.ts"
   },
   "dependencies": {
     "@crawlee/core": "3.18.2",
@@ -24,6 +25,7 @@
     "csv-parse": "7.0.3",
     "ipaddr.js": "2.5.0",
     "jsqr": "1.4.0",
+    "libphonenumber-js": "1.13.14",
     "pg": "8.23.1",
     "pino": "10.3.1",
     "playwright-core": "1.56.1",

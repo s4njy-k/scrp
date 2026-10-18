@@ -3,8 +3,8 @@
  * Operator CLI contract (blueprint §18). Run inside the coordinator container:
  *   docker --context rootless compose -p cyber-web-collector exec coordinator node dist/cli.js <command>
  */
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
 import { Command } from 'commander';
 import { loadPolicy, type Policy } from './config/policy.js';
 import { audit, createPool, type Pool } from './db/pool.js';
@@ -14,7 +14,11 @@ import { writeExport } from './export/exporter.js';
 import { collectStatus } from './observability/status.js';
 import { reconcile } from './coordinator/reconciler.js';
 import { applyRetention } from './coordinator/retention.js';
-import { artifactRoot, sha256File } from './storage/artifactStore.js';
+import { artifactRoot } from './storage/artifactStore.js';
+import { runVerification } from './evidence/verify.js';
+import { createCheckpoint, generateSigningKey, sealPending, verifyChain, type CheckpointFile } from './evidence/custody.js';
+import { createEvidencePackage, verifyPackageDir } from './evidence/package.js';
+import { effectiveClockStatus, type ClockStatus } from './evidence/time.js';
 import { logger } from './observability/logger.js';
 
 const program = new Command();
@@ -55,7 +59,7 @@ program.command('migrate').description('Apply database migrations and sync brows
 });
 
 program.command('serve')
-  .argument('<role>', 'coordinator | browser-worker | gateway')
+  .argument('<role>', 'coordinator | browser-worker | gateway | api')
   .description('Run a long-lived service role')
   .action(async (role: string) => {
     process.env.COLLECTOR_ROLE = role;
@@ -71,6 +75,18 @@ program.command('serve')
     }
     const policy = loadPolicy();
     const root = artifactRoot();
+    if (role === 'api') {
+      const { buildApp } = await import('./web/app.js');
+      const pool = createPool(undefined, 10);
+      if (process.env.MIGRATE_ON_START === 'true') await migrate(pool);
+      const app = buildApp({ pool, policy, root });
+      // Loopback by default: reach it through an SSH tunnel or an approved reverse proxy (no public ingress).
+      await app.listen(Number(process.env.API_PORT ?? 8080), process.env.API_BIND ?? '127.0.0.1');
+      const stop = () => { void app.close().then(() => pool.end()).then(() => process.exit(0)); };
+      process.once('SIGTERM', stop);
+      process.once('SIGINT', stop);
+      return;
+    }
     if (role === 'coordinator') {
       const { runCoordinator } = await import('./coordinator/main.js');
       await runCoordinator(createPool(undefined, 8), policy, root);
@@ -83,16 +99,16 @@ program.command('serve')
   });
 
 program.command('import')
-  .argument('<file>', 'CSV or JSONL file (inside the container, e.g. /input/urls.csv)')
+  .argument('<file>', 'CSV, JSONL, XLSX or one-URL-per-line .txt file (inside the container, e.g. /input/urls.csv)')
   .option('--profile <profile>', 'default capture profile: data_triage | browser_evidence', 'browser_evidence')
   .option('--window <key>', 'collection window key for target/profile/window deduplication', today())
-  .option('--format <format>', 'csv | jsonl (default: by extension)')
+  .option('--format <format>', 'csv | jsonl | xlsx | text (default: by extension)')
   .option('--by <actor>', 'operator identifier recorded in the audit log', process.env.USER ?? 'operator')
   .description('Import targets; every line is recorded, including rejections with reasons')
   .action(async (file: string, o: { profile: string; window: string; format?: string; by: string }) => {
     if (o.profile !== 'data_triage' && o.profile !== 'browser_evidence') throw new Error('--profile must be data_triage or browser_evidence');
     await withPool(async (pool, policy) => {
-      const s = await importFile(pool, policy, file, { defaultProfile: o.profile as 'data_triage' | 'browser_evidence', windowKey: o.window, importedBy: o.by, ...(o.format ? { format: o.format as 'csv' | 'jsonl' } : {}) });
+      const s = await importFile(pool, policy, file, { defaultProfile: o.profile as 'data_triage' | 'browser_evidence', windowKey: o.window, importedBy: o.by, ...(o.format ? { format: o.format as 'csv' | 'jsonl' | 'xlsx' | 'text' } : {}) });
       print(s);
     });
   });
@@ -188,23 +204,135 @@ program.command('retention')
   .action(async (o: { delete?: boolean }) => withPool(async (pool, policy) => print(await applyRetention(pool, policy, artifactRoot(), { deleteEnabled: Boolean(o.delete) }))));
 
 program.command('verify')
-  .argument('<attemptId>')
-  .description('Re-hash an attempt directory against its manifest and the ledger')
-  .action(async (attemptId: string) => withPool(async (pool) => {
-    const a = (await pool.query<{ artifact_dir: string; manifest_sha256: string }>('SELECT artifact_dir, manifest_sha256 FROM attempts WHERE id = $1', [attemptId])).rows[0];
-    if (!a?.artifact_dir) throw new Error('attempt has no artifact directory');
-    const dir = join(artifactRoot(), a.artifact_dir);
-    const manifestSha = (await sha256File(join(dir, 'manifest.json'))).sha256;
-    const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')) as { artifacts: { path: string | null; sha256: string | null }[] };
-    const results = [];
-    for (const art of manifest.artifacts) {
-      if (!art.path) continue;
-      const actual = await sha256File(join(dir, art.path)).then((r) => r.sha256).catch(() => null);
-      results.push({ path: art.path, ok: actual === art.sha256 });
-    }
-    print({ manifest_matches_ledger: manifestSha === a.manifest_sha256, artifacts: results, all_ok: manifestSha === a.manifest_sha256 && results.every((r) => r.ok),
-      note: 'hashes support integrity checking; they do not by themselves establish authenticity, lawful acquisition or admissibility' });
+  .argument('[attemptId]', 'attempt id (or use --job / --case)')
+  .option('--job <id>', 'verify every committed attempt of a job')
+  .option('--case <ref>', 'verify every committed attempt linked to a case reference')
+  .option('--by <actor>', 'operator', process.env.USER ?? 'operator')
+  .description('Verify Evidence: re-hash artifacts against manifests and the ledger; writes a hashed verification report')
+  .action(async (attemptId: string | undefined, o: { job?: string; case?: string; by: string }) => withPool(async (pool) => {
+    const scope = o.case ? 'case' : o.job ? 'job' : 'attempt';
+    const id = o.case ?? o.job ?? attemptId;
+    if (!id) throw new Error('give an attempt id, --job <id> or --case <ref>');
+    const r = await runVerification(pool, artifactRoot(), scope, id, o.by, { actorKind: 'operator' });
+    print({ run_id: r.run_id, result: r.result, counts: r.counts, report_path: r.report_path, report_sha256: r.report_sha256,
+      failures: r.attempts.flatMap((a) => [...(a.manifest.status === 'ok' ? [] : [{ attempt: a.attempt_id, manifest: a.manifest.status }]),
+        ...a.artifacts.filter((c) => c.status !== 'ok').map((c) => ({ attempt: a.attempt_id, path: c.path, status: c.status }))]),
+      note: r.statement });
+    if (r.result !== 'pass') process.exitCode = 2;
   }));
+
+const custody = program.command('custody').description('Tamper-evident custody chain over the audit log');
+custody.command('seal').description('Seal all committed, unsealed audit events now').action(async () => withPool(async (pool) => {
+  let n = 0;
+  for (let k = await sealPending(pool); k > 0; k = await sealPending(pool)) n += k;
+  print({ sealed: n });
+}));
+custody.command('verify')
+  .option('--checkpoint <file>', 'externally held checkpoint file to compare against')
+  .description('Recompute the whole chain; optionally compare with an external signed checkpoint')
+  .action(async (o: { checkpoint?: string }) => withPool(async (pool) => {
+    const checkpoint = o.checkpoint ? JSON.parse(await readFile(o.checkpoint, 'utf8')) as CheckpointFile : undefined;
+    const r = await verifyChain(pool, checkpoint ? { checkpoint } : {});
+    print(r);
+    if (!r.ok) process.exitCode = 2;
+  }));
+custody.command('checkpoint')
+  .option('--note <text>', 'free-text note stored with the checkpoint')
+  .option('--by <actor>', 'operator', process.env.USER ?? 'operator')
+  .description('Export a (signed) chain-head checkpoint; copy it to storage outside this host')
+  .action(async (o: { note?: string; by: string }) => withPool(async (pool) => print(await createCheckpoint(pool, artifactRoot(), o.by, o.note ? { note: o.note } : {}))));
+custody.command('keygen')
+  .argument('<privateKeyFile>', 'where to write the Ed25519 private key (mode 0600; keep it off the artifact volume)')
+  .description('Generate an Ed25519 checkpoint-signing key pair (public key printed and written next to it)')
+  .action(async (file: string) => {
+    const k = generateSigningKey();
+    await writeFile(file, k.privatePem, { mode: 0o600, flag: 'wx' });
+    await writeFile(`${file}.pub`, k.publicPem, { mode: 0o644, flag: 'wx' });
+    print({ private_key: file, public_key: `${file}.pub`, public_key_pem: k.publicPem });
+  });
+
+const pkg = program.command('package').description('Evidence packages with a parent hash index');
+pkg.command('create')
+  .requiredOption('--purpose <text>', 'why the package is produced (recorded in the custody chain)')
+  .option('--job <id>').option('--case <ref>').option('--attempts <ids>', 'comma-separated attempt ids')
+  .option('--include-restricted', 'include restricted artifacts (session/cookie data); requires a documented need')
+  .option('--by <actor>', 'operator', process.env.USER ?? 'operator')
+  .action(async (o: { purpose: string; job?: string; case?: string; attempts?: string; includeRestricted?: boolean; by: string }) => withPool(async (pool) => {
+    const kind = o.case ? 'case' : o.job ? 'job' : o.attempts ? 'attempts' : null;
+    if (!kind) throw new Error('give --job, --case or --attempts');
+    print(await createEvidencePackage(pool, artifactRoot(), { kind, id: (o.case ?? o.job ?? o.attempts)!, purpose: o.purpose, actor: o.by, includeRestricted: Boolean(o.includeRestricted), actorKind: 'operator' }));
+  }));
+pkg.command('verify')
+  .argument('<dir>', 'package directory (extracted from the .tar if needed)')
+  .option('--index-sha256 <hex>', 'index hash from the ledger or the hand-off record')
+  .description('Verify a package offline against its own index')
+  .action(async (dir: string, o: { indexSha256?: string }) => {
+    const r = await verifyPackageDir(dir, o.indexSha256);
+    print(r);
+    if (!r.ok) process.exitCode = 2;
+  });
+
+program.command('clock')
+  .argument('<action>', 'record | show')
+  .option('--source <text>', 'time source, e.g. "chrony: ntp.example.in"')
+  .option('--synchronized <yes|no>', 'whether the host reports synchronised time')
+  .option('--offset-ms <n>', 'measured offset from the reference in milliseconds')
+  .description('Record the host clock-synchronisation fact attached to every manifest (run by scripts/preflight.sh)')
+  .action(async (action: string, o: { source?: string; synchronized?: string; offsetMs?: string }) => withPool(async (pool) => {
+    if (action === 'show') {
+      const r = (await pool.query<{ value: Record<string, unknown> }>(`SELECT value FROM system_state WHERE key = 'clock'`)).rows[0];
+      print(effectiveClockStatus(r?.value as Partial<ClockStatus>));
+      return;
+    }
+    if (action !== 'record') throw new Error('action must be record or show');
+    if (!o.source || !o.synchronized) throw new Error('--source and --synchronized are required');
+    const value = { source: o.source, sync_verified: o.synchronized === 'yes', offset_ms: o.offsetMs === undefined ? null : Number(o.offsetMs), recorded_at: new Date().toISOString() };
+    await pool.query(`INSERT INTO system_state (key, value) VALUES ('clock', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [value]);
+    await audit(pool, process.env.USER ?? 'operator', 'clock_status_recorded', value, { actorKind: 'operator', objectType: 'system', objectId: 'clock' });
+    print(value);
+  }));
+
+const users = program.command('user').description('Analyst accounts (bootstrap the first administrator here; manage others in the UI)');
+users.command('create')
+  .requiredOption('--username <name>').requiredOption('--display-name <text>')
+  .requiredOption('--roles <list>', 'comma-separated: admin,intake,analyst,approver,evidence,auditor,report')
+  .option('--by <actor>', 'operator', process.env.USER ?? 'operator')
+  .description('Create an account with a one-time password (must be changed, and MFA enrolled, at first sign-in)')
+  .action(async (o: { username: string; displayName: string; roles: string; by: string }) => withPool(async (pool) => {
+    const { hashPassword } = await import('./web/auth.js');
+    const { generateTemporaryPassword } = await import('./web/routes/auth.js');
+    const { ROLES } = await import('./web/http.js');
+    const roles = o.roles.split(',').map((r) => r.trim()).filter(Boolean);
+    const bad = roles.find((r) => !(ROLES as readonly string[]).includes(r));
+    if (bad) throw new Error(`unknown role: ${bad}`);
+    const temp = generateTemporaryPassword();
+    const id = randomUUID();
+    await pool.query(`INSERT INTO users (id, username, display_name, password_hash, roles, must_change_password, created_by) VALUES ($1,$2,$3,$4,$5,true,$6)`,
+      [id, o.username.toLowerCase(), o.displayName, await hashPassword(temp), roles, o.by]);
+    await audit(pool, o.by, 'user_created', { username: o.username.toLowerCase(), roles, via: 'cli' }, { actorKind: 'operator', objectType: 'user', objectId: id, outcome: 'ok' });
+    print({ id, username: o.username.toLowerCase(), roles, temporary_password: temp });
+  }));
+users.command('reset')
+  .argument('<username>')
+  .option('--reset-mfa', 'also remove the enrolled TOTP device')
+  .option('--by <actor>', 'operator', process.env.USER ?? 'operator')
+  .description('Issue a new one-time password and revoke all sessions')
+  .action(async (username: string, o: { resetMfa?: boolean; by: string }) => withPool(async (pool) => {
+    const { hashPassword } = await import('./web/auth.js');
+    const { generateTemporaryPassword } = await import('./web/routes/auth.js');
+    const temp = generateTemporaryPassword();
+    const r = await pool.query<{ id: string }>(
+      `UPDATE users SET password_hash = $2, must_change_password = true, failed_logins = 0, locked_until = NULL, disabled_at = NULL,
+          totp_enabled = CASE WHEN $3 THEN false ELSE totp_enabled END, totp_secret = CASE WHEN $3 THEN NULL ELSE totp_secret END
+        WHERE username = $1 RETURNING id`, [username.toLowerCase(), await hashPassword(temp), Boolean(o.resetMfa)]);
+    if (!r.rows[0]) throw new Error('user not found');
+    await pool.query(`UPDATE user_sessions SET revoked_at = now(), revoked_reason = 'credentials_reset' WHERE user_id = $1 AND revoked_at IS NULL`, [r.rows[0].id]);
+    await audit(pool, o.by, 'user_credentials_reset', { username, reset_mfa: Boolean(o.resetMfa), via: 'cli' }, { actorKind: 'operator', objectType: 'user', objectId: r.rows[0].id, outcome: 'ok' });
+    print({ username, temporary_password: temp });
+  }));
+users.command('list').action(async () => withPool(async (pool) => {
+  print((await pool.query('SELECT username, display_name, roles, totp_enabled, disabled_at, created_at FROM users ORDER BY username')).rows);
+}));
 
 const backup = program.command('backup').description('Record and report backup facts (the backup itself runs scripts/backup.sh)');
 backup.command('record').requiredOption('--destination <text>').requiredOption('--independent <yes|no>').option('--note <text>', '', '')

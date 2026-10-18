@@ -574,6 +574,335 @@
         "default_class"
       ],
       "additionalProperties": false
+    },
+    "web": {
+      "type": "object",
+      "properties": {
+        "session_idle_minutes": {
+          "default": 30,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 240
+        },
+        "session_absolute_hours": {
+          "default": 12,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 24
+        },
+        "mfa_required": {
+          "default": true,
+          "type": "boolean"
+        },
+        "cookie_secure": {
+          "default": true,
+          "type": "boolean"
+        },
+        "hsts": {
+          "default": false,
+          "type": "boolean"
+        },
+        "login_attempts_per_minute": {
+          "default": 5,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 60
+        },
+        "lockout_after_failed_logins": {
+          "default": 10,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 50
+        },
+        "lockout_minutes": {
+          "default": 15,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1440
+        },
+        "api_requests_per_second": {
+          "default": 20,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 500
+        },
+        "paginated_list_limit_default": {
+          "default": 50,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 500
+        },
+        "paginated_list_limit_max": {
+          "default": 200,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        },
+        "sse_max_connections": {
+          "default": 50,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 500
+        },
+        "sse_poll_ms": {
+          "default": 2000,
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 60000
+        },
+        "require_case_scope_for_sensitive_search": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        },
+        "require_purpose_for_global_search": {
+          "default": true,
+          "type": "boolean"
+        },
+        "intake_max_rows": {
+          "default": 5000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 100000
+        },
+        "intake_max_mib": {
+          "default": 10,
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        },
+        "upload_max_mib": {
+          "default": 25,
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 200
+        },
+        "dashboard_aggregation_cache_seconds": {
+          "default": 30,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600
+        },
+        "show_utc_and_ist": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "session_idle_minutes",
+        "session_absolute_hours",
+        "mfa_required",
+        "cookie_secure",
+        "hsts",
+        "login_attempts_per_minute",
+        "lockout_after_failed_logins",
+        "lockout_minutes",
+        "api_requests_per_second",
+        "paginated_list_limit_default",
+        "paginated_list_limit_max",
+        "sse_max_connections",
+        "sse_poll_ms",
+        "require_case_scope_for_sensitive_search",
+        "require_purpose_for_global_search",
+        "intake_max_rows",
+        "intake_max_mib",
+        "upload_max_mib",
+        "dashboard_aggregation_cache_seconds",
+        "show_utc_and_ist"
+      ],
+      "additionalProperties": false
+    },
+    "governance": {
+      "type": "object",
+      "properties": {
+        "maker_checker_for_external_actions": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        },
+        "external_notice_autosend_enabled": {
+          "default": false,
+          "type": "boolean",
+          "const": false
+        },
+        "auto_takedown_enabled": {
+          "default": false,
+          "type": "boolean",
+          "const": false
+        },
+        "certificate_autosign": {
+          "default": false,
+          "type": "boolean",
+          "const": false
+        },
+        "analyst_review_required": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        },
+        "false_positive_override_requires_new_evidence": {
+          "default": true,
+          "type": "boolean",
+          "const": true
+        },
+        "section63_template_source_version": {
+          "default": "BSA-2023-Schedule-official",
+          "type": "string",
+          "minLength": 1
+        },
+        "risk_policy_version": {
+          "default": "risk-rules-1",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "maker_checker_for_external_actions",
+        "external_notice_autosend_enabled",
+        "auto_takedown_enabled",
+        "certificate_autosign",
+        "analyst_review_required",
+        "false_positive_override_requires_new_evidence",
+        "section63_template_source_version",
+        "risk_policy_version"
+      ],
+      "additionalProperties": false
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "actioned_target_revisit_enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_auto_revisits_per_target_per_day": {
+          "default": 2,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 6
+        },
+        "default_interval_hours": {
+          "default": 24,
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "min_interval_hours": {
+          "default": 6,
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_rule_duration_days": {
+          "default": 90,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 365
+        },
+        "revisit_priority": {
+          "default": -10,
+          "type": "integer",
+          "minimum": -1000,
+          "maximum": 1000
+        },
+        "notify_on_resurrection": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "actioned_target_revisit_enabled",
+        "max_auto_revisits_per_target_per_day",
+        "default_interval_hours",
+        "min_interval_hours",
+        "max_rule_duration_days",
+        "revisit_priority",
+        "notify_on_resurrection"
+      ],
+      "additionalProperties": false
+    },
+    "enrichment": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "dns": {
+          "default": true,
+          "type": "boolean"
+        },
+        "tls": {
+          "default": true,
+          "type": "boolean"
+        },
+        "rdap": {
+          "default": true,
+          "type": "boolean"
+        },
+        "certificate_transparency": {
+          "default": false,
+          "type": "boolean"
+        },
+        "cache_hours": {
+          "default": 24,
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "timeout_seconds": {
+          "default": 10,
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 60
+        },
+        "max_response_kib": {
+          "default": 512,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 10240
+        },
+        "targets_per_cycle": {
+          "default": 5,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        },
+        "rdap_bootstrap_dns_url": {
+          "default": "https://data.iana.org/rdap/dns.json",
+          "type": "string",
+          "format": "uri"
+        },
+        "rdap_bootstrap_ipv4_url": {
+          "default": "https://data.iana.org/rdap/ipv4.json",
+          "type": "string",
+          "format": "uri"
+        },
+        "rdap_bootstrap_ipv6_url": {
+          "default": "https://data.iana.org/rdap/ipv6.json",
+          "type": "string",
+          "format": "uri"
+        },
+        "ct_search_url": {
+          "default": "https://crt.sh/",
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "required": [
+        "enabled",
+        "dns",
+        "tls",
+        "rdap",
+        "certificate_transparency",
+        "cache_hours",
+        "timeout_seconds",
+        "max_response_kib",
+        "targets_per_cycle",
+        "rdap_bootstrap_dns_url",
+        "rdap_bootstrap_ipv4_url",
+        "rdap_bootstrap_ipv6_url",
+        "ct_search_url"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -591,7 +920,11 @@
     "http",
     "browser",
     "extraction",
-    "retention"
+    "retention",
+    "web",
+    "governance",
+    "monitoring",
+    "enrichment"
   ],
   "additionalProperties": false
 }

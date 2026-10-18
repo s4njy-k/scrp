@@ -25,7 +25,8 @@ export type Classification =
   | 'not_found' | 'server_error' | 'timeout' | 'connection_reset' | 'connection_refused'
   | 'dns_failure' | 'tls_failure' | 'egress_denied'
   | 'content_captured' | 'content_incomplete' | 'navigation_timeout_salvaged'
-  | 'rendering_incompatibility' | 'renderer_crash' | 'infrastructure_error';
+  | 'rendering_incompatibility' | 'renderer_crash' | 'infrastructure_error'
+  | 'parked_domain' | 'hosting_suspended' | 'isp_block_notice';
 
 export interface Classified {
   classification: Classification;
@@ -52,6 +53,7 @@ export interface HttpObservation {
   visibleTextLength: number;
   expectedJson?: boolean;
   retryAfterSeconds: number | null;
+  placeholder?: { kind: 'parked' | 'suspended' | 'isp_block' | null; signals: string[] };
 }
 
 export function classifyHttp(o: HttpObservation): Classified {
@@ -69,6 +71,7 @@ export function classifyHttp(o: HttpObservation): Classified {
   const status = o.status ?? 0;
   const isHtml = /html|xml/i.test(o.contentType ?? '') || /^\s*<(!doctype|html)/i.test(o.bodyText ?? '');
   if (o.challenge.challenge) return { classification: 'challenge', outcome: 'CHALLENGE_PAGE_CAPTURED', signals: o.challenge.signals };
+  if (o.placeholder?.kind === 'isp_block') return { classification: 'isp_block_notice', outcome: 'ACCESS_BLOCKED', signals: o.placeholder.signals };
   if (o.expectedJson && isHtml) return { classification: 'api_returned_html', outcome: 'CONTENT_INCOMPLETE', signals: ['expected_json_got_html'] };
   if (status === 429) return { classification: 'rate_limited', outcome: 'ACCESS_BLOCKED', signals: ['status:429'], retryAfterSeconds: o.retryAfterSeconds };
   if (status === 401 || (o.authSignals.length > 0 && status >= 400)) return { classification: 'auth_required', outcome: 'AUTH_REQUIRED', signals: o.authSignals };
@@ -79,6 +82,8 @@ export function classifyHttp(o: HttpObservation): Classified {
   if (o.bodyBytes === 0) return { classification: 'empty_response', outcome: 'CONTENT_INCOMPLETE', signals: ['empty_body'] };
   if (!isHtml) return { classification: 'non_html_document', outcome: 'CONTENT_CAPTURED', signals: [`content_type:${o.contentType ?? 'unknown'}`] };
   if (o.authSignals.length > 0 && o.visibleTextLength < 1500) return { classification: 'auth_required', outcome: 'AUTH_REQUIRED', signals: o.authSignals };
+  if (o.placeholder?.kind === 'parked') return { classification: 'parked_domain', outcome: 'CONTENT_CAPTURED', signals: o.placeholder.signals };
+  if (o.placeholder?.kind === 'suspended') return { classification: 'hosting_suspended', outcome: 'CONTENT_CAPTURED', signals: o.placeholder.signals };
   if (o.jsShellSignals.length > 0) return { classification: 'js_shell', outcome: 'CONTENT_INCOMPLETE', signals: o.jsShellSignals };
   return { classification: 'static_html_usable', outcome: 'CONTENT_CAPTURED', signals: [`text_length:${o.visibleTextLength}`] };
 }
@@ -111,6 +116,12 @@ export function decideAfterHttp(job: RouterJob, c: Classified, spentSeconds: num
     canBrowser ? next('browser_primary', c, why, delay, extra) : exhausted(c, `${why} but no browser budget`);
 
   switch (c.classification) {
+    case 'parked_domain':
+    case 'hosting_suspended':
+      // The placeholder is the observation; an evidence profile still captures it in the browser.
+      return evidence ? toBrowser(`${c.classification} page observed over HTTP; browser evidence of the placeholder required`) : finish('COMPLETE', c, 'placeholder page recorded');
+    case 'isp_block_notice':
+      return evidence && canBrowser ? toBrowser('blocking notice over HTTP; capture it in the browser as evidence') : finish('FAILED_FINAL', c, 'blocking notice observed at this vantage; not proof the origin is down');
     case 'static_html_usable':
     case 'non_html_document':
       // Data can be complete; browser evidence still needs the browser (§7).
@@ -172,6 +183,7 @@ export interface BrowserObservation {
   missingRequired: string[];
   visibleTextLength: number;
   retryAfterSeconds: number | null;
+  placeholder?: { kind: 'parked' | 'suspended' | 'isp_block' | null; signals: string[] };
 }
 
 export function classifyBrowser(o: BrowserObservation): Classified {
@@ -187,6 +199,7 @@ export function classifyBrowser(o: BrowserObservation): Classified {
     return http;
   }
   if (o.challenge.challenge && !o.challengeResolvedDuringWait) return { classification: 'challenge', outcome: 'CHALLENGE_PAGE_CAPTURED', signals: o.challenge.signals };
+  if (o.placeholder?.kind === 'isp_block') return { classification: 'isp_block_notice', outcome: 'ACCESS_BLOCKED', signals: o.placeholder.signals };
   const status = o.status ?? 200;
   if (status === 429) return { classification: 'rate_limited', outcome: 'ACCESS_BLOCKED', signals: ['status:429'], retryAfterSeconds: o.retryAfterSeconds };
   if (status === 401) return { classification: 'auth_required', outcome: 'AUTH_REQUIRED', signals: o.authSignals.length ? o.authSignals : ['status:401'] };
@@ -197,6 +210,8 @@ export function classifyBrowser(o: BrowserObservation): Classified {
     return { classification: 'rendering_incompatibility', outcome: 'CONTENT_INCOMPLETE', signals: o.renderingIncompatibilitySignals };
   }
   if (o.authSignals.length > 0 && o.visibleTextLength < 1500) return { classification: 'auth_required', outcome: 'AUTH_REQUIRED', signals: o.authSignals };
+  if (o.contentAppeared && o.placeholder?.kind === 'parked') return { classification: 'parked_domain', outcome: 'CONTENT_CAPTURED', signals: o.placeholder.signals };
+  if (o.contentAppeared && o.placeholder?.kind === 'suspended') return { classification: 'hosting_suspended', outcome: 'CONTENT_CAPTURED', signals: o.placeholder.signals };
   if (!o.contentAppeared) return { classification: 'content_incomplete', outcome: 'CONTENT_INCOMPLETE', signals: ['no_renderable_content'] };
   if (o.navigationTimedOut) return { classification: 'navigation_timeout_salvaged', outcome: 'CONTENT_INCOMPLETE', signals: ['navigation_timeout', ...o.missingRequired.map((m) => `missing:${m}`)] };
   if (!o.requiredSatisfied) return { classification: 'content_incomplete', outcome: 'CONTENT_INCOMPLETE', signals: o.missingRequired.map((m) => `missing:${m}`) };
@@ -214,6 +229,12 @@ export function decideAfterBrowser(job: RouterJob, c: Classified, o: BrowserObse
   switch (c.classification) {
     case 'content_captured':
       return finish('COMPLETE', c, 'required artifact contract satisfied');
+    case 'parked_domain':
+    case 'hosting_suspended':
+      // A valid observation of the placeholder; the reported content is not there now.
+      return o.requiredSatisfied || useful ? finish(o.requiredSatisfied ? 'COMPLETE' : 'PARTIAL', c, 'placeholder page observed and preserved') : exhausted(c, 'placeholder page without usable evidence');
+    case 'isp_block_notice':
+      return finish('FAILED_FINAL', c, 'blocking notice observed at this vantage and preserved; does not prove the origin is down or blocked elsewhere');
     case 'content_incomplete':
     case 'navigation_timeout_salvaged':
       if (!useful && canRetryPrimary && job.stage === 'browser_primary') return next('browser_primary', c, 'no usable evidence; one retry', backoffSeconds(job.browser_attempts, 15, 120, rand));

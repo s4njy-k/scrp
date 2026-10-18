@@ -36,3 +36,18 @@
    do not drop data.
 5. Record the rollback (version, time, reason) in the deployment change log in
    `docs/deployment-readiness.md`.
+
+## Rolling back the v4 additions (migrations 0003–0009, analyst console)
+
+* **Console only.** `$DC --profile console stop api` turns off the analyst API and UI.
+  Collection, extraction and the custody seal keep running in the coordinator. Nothing else
+  depends on the console.
+* **Schema.** Migrations 0003–0009 only add tables, columns (with defaults), views and triggers,
+  and widen one check constraint. The previous image can run against them. The previous code
+  only inserts into `audit_events`, so the append-only trigger does not affect it.
+* **Retention after a rollback.** The previous release does not know which attempts are cited by
+  notices or certificates. Keep `RETENTION_DELETE_ENABLED=false` while an older image runs, so
+  cited evidence cannot expire. Case holds are still honoured by both versions.
+* **Custody.** Events written by the older image are not sealed until the newer coordinator
+  runs again. They are then sealed in order. `custody verify` reports how many events are
+  unsealed and the age of the oldest.

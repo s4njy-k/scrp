@@ -13,7 +13,13 @@ import { audit, withTransaction, type Pool } from '../db/pool.js';
 import { logger } from '../observability/logger.js';
 import { htmlToText } from '../router/signals.js';
 import { sha256File } from '../storage/artifactStore.js';
-import { ALL_FIELDS, dedupeIdentifiers, extractFromHtmlAttributes, extractFromText, type FieldType, type Identifier } from './identifiers.js';
+import {
+  ALL_FIELDS, confidenceFor, dedupeIdentifiers, domTemplateHash, EXTRACTOR_VERSION, extractBrandClaims, extractFromHtmlAttributes, extractFromText,
+  SIGNAL_ONLY_FIELDS, valueKey, type FieldType, type Identifier,
+} from './identifiers.js';
+import { makeThumbnail } from './thumbnail.js';
+import { recordRiskAssessment } from '../investigation/risk.js';
+import { detectReappearance } from '../monitoring/monitor.js';
 import { decodeQrFromPng } from './qr.js';
 import { ocrAvailable, ocrImage } from './ocr.js';
 import { parseTargetInput, type TargetCandidate } from '../importer/url.js';
@@ -117,7 +123,14 @@ export async function runExtraction(pool: Pool, policy: Policy, root: string, at
     const text = buf.toString('utf8');
     if (t === 'rendered_text') {
       ids.push(...extractFromText({ text, method: 'dom', displayContext: 'displayed', sourceUrl: baseUrl, artifactSha256: a.sha256 }));
+      ids.push(...extractBrandClaims({ text, method: 'dom', displayContext: 'displayed', sourceUrl: baseUrl, artifactSha256: a.sha256 }));
     } else if (t === 'rendered_dom' || t === 'frame_dom' || t === 'raw_html') {
+      if (t === 'rendered_dom') {
+        const tpl = domTemplateHash(text);
+        if (tpl) ids.push({ fieldType: 'dom_template_hash', rawValue: tpl, normalisedValue: tpl, method: 'dom', sourceUrl: baseUrl, frameUrl: null, locator: null, bbox: null, context: 'SHA-256 of the first 4000 DOM tag names', artifactSha256: a.sha256, validation: 'unvalidated', displayContext: 'resource_string', note: 'template signal only; site builders share templates' });
+        const title = /<title[^>]*>([^<]{1,300})<\/title>/i.exec(text)?.[1];
+        if (title) ids.push(...extractBrandClaims({ text: title, method: 'dom', displayContext: 'displayed', sourceUrl: baseUrl, artifactSha256: a.sha256 }));
+      }
       const base = { displayContext: 'unknown' as const, sourceUrl: srcUrl, frameUrl: t === 'frame_dom' ? (meta.frame_url as string) : null, artifactSha256: a.sha256 };
       const attr = extractFromHtmlAttributes(text, srcUrl, base);
       ids.push(...attr.identifiers);
@@ -194,6 +207,17 @@ export async function runExtraction(pool: Pool, policy: Policy, root: string, at
   }
 
   const identifiers = dedupeIdentifiers(ids);
+  // A QR code's decoded payee can differ from the payee shown in text: preserve both and flag the conflict.
+  const qrPayees = new Set(identifiers.filter((i) => i.fieldType === 'upi_vpa' && i.method === 'qr').map((i) => valueKey(i)));
+  const shownPayees = new Set(identifiers.filter((i) => i.fieldType === 'upi_vpa' && i.method !== 'qr' && i.displayContext === 'displayed').map((i) => valueKey(i)));
+  const conflictsFor = (i: Identifier): { kind: string; detail: string }[] => {
+    if (i.fieldType !== 'upi_vpa' || qrPayees.size === 0 || shownPayees.size === 0) return [];
+    if (i.method === 'qr' && !shownPayees.has(valueKey(i))) return [{ kind: 'qr_vs_displayed_text', detail: `QR pays ${valueKey(i)}; page text shows ${[...shownPayees].slice(0, 3).join(', ')}` }];
+    if (i.method !== 'qr' && i.displayContext === 'displayed' && !qrPayees.has(valueKey(i))) return [{ kind: 'qr_vs_displayed_text', detail: `page text shows ${valueKey(i)}; QR pays ${[...qrPayees].slice(0, 3).join(', ')}` }];
+    return [];
+  };
+  const artifactIdBySha = new Map<string, number>();
+  for (const a of artifacts) if (a.sha256 && !artifactIdBySha.has(a.sha256)) artifactIdBySha.set(a.sha256, a.id);
   const observed = new Set(identifiers.map((i) => i.fieldType));
   const hadSources = artifacts.some((a) => ['rendered_text', 'rendered_dom', 'raw_html', 'http_body'].includes(a.artifact_type) && verified.has(a.id));
   const fieldStatus = (f: FieldType): { status: string; detail: string | null } => {
@@ -214,9 +238,18 @@ export async function runExtraction(pool: Pool, policy: Policy, root: string, at
     qr: qrResults, ocr: ocrResults.map((o) => ({ source: o.source, source_sha256: o.sha256, engine: o.engine, chars: o.text.length })),
     links_discovered_not_contacted: [...links].slice(0, 500), form_actions: [...formActions], api_endpoints: [...apiEndpoints],
   };
-  const files: { rel: string; data: string }[] = [{ rel: 'extraction.json', data: JSON.stringify(extractionDoc, null, 2) }];
+  const files: { rel: string; data: string | Buffer; type?: string; derivedFrom?: number; meta?: Record<string, unknown> }[] = [{ rel: 'extraction.json', data: JSON.stringify(extractionDoc, null, 2) }];
   ocrResults.forEach((o, i) => files.push({ rel: `ocr-${String(i + 1).padStart(2, '0')}.txt`, data: o.text }));
-  const derivedManifest = files.map((f) => ({ path: f.rel, sha256: createHash('sha256').update(f.data).digest('hex'), size: Buffer.byteLength(f.data) }));
+  // Thumbnails for list/timeline views: derivatives that reference their original.
+  for (const a of artifacts.filter((x) => ['screenshot_early', 'screenshot_settled', 'screenshot_full_or_tiles', 'screenshot_tile'].includes(x.artifact_type)).slice(0, 12)) {
+    const buf = await load(a);
+    if (!buf) continue;
+    const th = makeThumbnail(buf, { maxSourceMegapixels: policy.bounds.max_image_decode_megapixels });
+    if (!th) continue;
+    files.push({ rel: `thumb-${a.id}.png`, data: th.png, type: 'thumbnail', derivedFrom: a.id,
+      meta: { source_sha256: a.sha256, width: th.width, height: th.height, source_width: th.sourceWidth, source_height: th.sourceHeight, cropped_from_top: th.croppedFromTop, method: 'box-filter downscale (derivative; never evidence)' } });
+  }
+  const derivedManifest = files.map((f) => ({ path: f.rel, sha256: createHash('sha256').update(f.data).digest('hex'), size: Buffer.byteLength(f.data), type: f.type ?? 'derived_extraction', derivedFrom: f.derivedFrom ?? null, meta: f.meta ?? {} }));
   for (const f of files) await writeFile(join(tmp, f.rel), f.data, { mode: 0o640 });
   await writeFile(join(tmp, 'manifest.json'), JSON.stringify({ attempt_id: attempt.id, derived: derivedManifest, sources: artifacts.filter((a) => verified.has(a.id)).map((a) => ({ path: a.relative_path, sha256: a.sha256 })) }, null, 2));
   await mkdir(join(root, 'derived'), { recursive: true });
@@ -232,9 +265,13 @@ export async function runExtraction(pool: Pool, policy: Policy, root: string, at
     await client.query('DELETE FROM artifacts WHERE attempt_id = $1 AND is_derivative', [attempt.id]);
     for (const i of identifiers) {
       await client.query(
-        `INSERT INTO identifiers (attempt_id, job_id, target_id, field_type, raw_value, normalised_value, method, source_url, frame_url, locator, bbox, context, artifact_sha256, validation_state, display_context, observed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,(SELECT started_at FROM attempts WHERE id = $1))`,
-        [attempt.id, attempt.job_id, attempt.target_id, i.fieldType, i.rawValue, i.normalisedValue, i.method, i.sourceUrl, i.frameUrl, i.locator, i.bbox, i.note ? `${i.context} [${i.note}]` : i.context, i.artifactSha256, i.validation, i.displayContext],
+        `INSERT INTO identifiers (attempt_id, job_id, target_id, field_type, raw_value, normalised_value, method, source_url, frame_url, locator, bbox, context, artifact_sha256,
+            validation_state, display_context, observed_at, value_key, extractor_version, confidence, source_artifact_id, conflicts, signal_only)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,(SELECT started_at FROM attempts WHERE id = $1),$16,$17,$18,$19,$20,$21)`,
+        [attempt.id, attempt.job_id, attempt.target_id, i.fieldType, i.rawValue, i.normalisedValue, i.method, i.sourceUrl, i.frameUrl, i.locator, i.bbox,
+         i.note ? `${i.context} [${i.note}]` : i.context, i.artifactSha256, i.validation, i.displayContext,
+         valueKey(i), EXTRACTOR_VERSION, confidenceFor(i), i.artifactSha256 ? artifactIdBySha.get(i.artifactSha256) ?? null : null,
+         JSON.stringify(conflictsFor(i)), SIGNAL_ONLY_FIELDS.has(i.fieldType)],
       );
     }
     for (const f of ALL_FIELDS) {
@@ -257,14 +294,19 @@ export async function runExtraction(pool: Pool, policy: Policy, root: string, at
     }
     for (const d of derivedManifest) {
       await client.query(
-        `INSERT INTO artifacts (attempt_id, artifact_type, relative_path, size_bytes, sha256, creation_method, completeness, is_derivative, metadata)
-         VALUES ($1, 'derived_extraction', $2, $3, $4, 'collector extraction pipeline', $5, true, $6)`,
-        [attempt.id, `${derivedRel}/${d.path}`, d.size, d.sha256, failures.length ? 'partial' : 'complete', { root_relative: true }],
+        `INSERT INTO artifacts (attempt_id, artifact_type, relative_path, size_bytes, sha256, creation_method, completeness, is_derivative, derived_from, metadata, verification_state, last_verified_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, 'verified_at_commit', now())`,
+        [attempt.id, d.type, `${derivedRel}/${d.path}`, d.size, d.sha256, d.type === 'thumbnail' ? 'collector thumbnail (derivative)' : `collector extraction pipeline ${EXTRACTOR_VERSION}`,
+         d.type === 'thumbnail' ? 'complete' : failures.length ? 'partial' : 'complete', d.derivedFrom, { root_relative: true, ...d.meta }],
       );
     }
     await client.query(`UPDATE attempts SET extraction_state = $2 WHERE id = $1`, [attempt.id, failures.length && !hadSources ? 'failed' : 'done']);
     await audit(client, 'extraction', 'extraction_done', { identifiers: identifiers.length, failures: failures.slice(0, 10), qr: qrResults.length, ocr: ocrResults.length }, { jobId: attempt.job_id, attemptId: attempt.id });
   });
+
+  // Explainable triage aid, recomputed for every extraction (append-only versions).
+  await recordRiskAssessment(pool, policy.governance.risk_policy_version, attempt.id).catch((err: Error) => logger.warn({ attempt: attempt.id, err: err.message }, 'risk assessment failed'));
+  await detectReappearance(pool, policy, attempt.id).catch((err: Error) => logger.warn({ attempt: attempt.id, err: err.message }, 'reappearance check failed'));
 
   // Only pages whose content was actually reached are worth expanding; links on a
   // challenge, block or error page would spend budget on the same refusal.

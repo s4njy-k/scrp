@@ -81,8 +81,26 @@ export interface ManifestEntry {
   metadata?: Record<string, unknown>;
 }
 
-export interface AttemptManifest {
-  manifestVersion: 1;
+/** Collection context recorded with every v2 manifest (checklist §1, §2; blueprint v4 §23.3). */
+export interface ManifestContext {
+  /** Seed inputs exactly as submitted (several seeds may share one deduplicated job). */
+  originalInputs: string[];
+  navigationUrl: string;
+  observedAtUtc: string;
+  observedAtIst: string;
+  clock: { source: string; sync_verified: boolean; offset_ms: number | null; recorded_at: string | null; age_seconds?: number | null; note?: string };
+  profile: { name: string; captureVariant: string; retentionClass: string; caseRefs: string[] };
+  engineInfo: { name: string; version: string | null; adapter: string };
+  captureContext: Record<string, unknown>;
+  networkVantage: { id: string; publicIp: string | null; publicIpSource: 'operator_declared' | 'not_observed' };
+  redirectChain: { type: string; from: string | null; to: string; at: string | null }[];
+  software: { collector_version: string; git_commit: string | null; node_version: string };
+  integrity: { algorithm: 'sha256'; note: string };
+}
+
+export interface AttemptManifest extends Partial<ManifestContext> {
+  /** 1: pre-v4 manifests (still accepted); 2: adds ManifestContext. */
+  manifestVersion: 1 | 2;
   attemptId: string;
   jobId: number;
   attemptNo: number;

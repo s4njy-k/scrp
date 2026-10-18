@@ -58,6 +58,12 @@ export interface Lease {
   attemptNo: number;
   attemptSeconds: number;
   leasedAt: Date;
+  /** Seed inputs exactly as submitted, for the manifest (loaded with the lease). */
+  originalInputs?: string[];
+  /** Case references linked to this job through its seeds. */
+  caseRefs?: string[];
+  /** Host clock-synchronisation fact (system_state.clock) at lease time. */
+  clock?: Record<string, unknown> | null;
 }
 
 export type RouterDecision =

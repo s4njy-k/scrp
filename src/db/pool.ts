@@ -59,15 +59,33 @@ export async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) =>
 
 export type Queryable = Pick<pg.PoolClient, 'query'>;
 
+export interface AuditRefs {
+  jobId?: number | null;
+  attemptId?: string | null;
+  /** 'user' for authenticated analysts, 'operator' for CLI actions, 'service' otherwise. */
+  actorKind?: 'service' | 'user' | 'operator';
+  caseRef?: string | null;
+  objectType?: string | null;
+  objectId?: string | number | null;
+  outcome?: string | null;
+  requestId?: string | null;
+}
+
+/**
+ * Append an event to the audit log. Every event is later sealed into the
+ * tamper-evident custody chain (src/evidence/custody.ts); rows are append-only.
+ */
 export async function audit(
   db: Queryable,
   actor: string,
   eventType: string,
   details: Record<string, unknown> = {},
-  refs: { jobId?: number | null; attemptId?: string | null } = {},
+  refs: AuditRefs = {},
 ): Promise<void> {
   await db.query(
-    'INSERT INTO audit_events (actor, event_type, job_id, attempt_id, details) VALUES ($1, $2, $3, $4, $5)',
-    [actor, eventType, refs.jobId ?? null, refs.attemptId ?? null, details],
+    `INSERT INTO audit_events (actor, event_type, job_id, attempt_id, details, actor_kind, case_ref, object_type, object_id, outcome, request_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [actor, eventType, refs.jobId ?? null, refs.attemptId ?? null, details, refs.actorKind ?? 'service', refs.caseRef ?? null,
+     refs.objectType ?? null, refs.objectId === undefined || refs.objectId === null ? null : String(refs.objectId), refs.outcome ?? null, refs.requestId ?? null],
   );
 }

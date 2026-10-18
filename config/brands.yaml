@@ -1,0 +1,168 @@
+# Brand and official-domain dictionary (blueprint v4 §25.1, §25.2; checklist §3, §5).
+#
+# Used for brand-claim extraction, lookalike (typosquat/homoglyph/combo) alerts and the
+# benign-context checklist of the risk rules. A keyword or lookalike match is a SIGNAL,
+# never a finding: legitimate affiliates, agents, resellers, news and research sites
+# exist. Keep this list maintained locally and verify every official domain against the
+# organisation's own published channels before relying on it.
+#
+# Fields:
+#   id                 stable identifier
+#   name               display name
+#   kind               bank | payments | government | ecommerce | telecom | insurance | other
+#   keywords           phrases matched case-insensitively on word boundaries in visible text/titles
+#   keywords_case_sensitive  short acronyms matched case-sensitively only (e.g. "SBI")
+#   official_domains   registrable domains operated by the organisation
+#   affiliate_domains  authorised third parties (exempt from lookalike alerts; still reviewed)
+#   lookalike_labels   domain labels to compare candidate domains against (default: labels of official_domains)
+#
+# Indian banks are moving to the RBI-mandated .bank.in namespace: add each bank's
+# .bank.in domain here once confirmed from the bank's own published channels.
+schema_version: 1
+brands:
+  - id: sbi
+    name: State Bank of India
+    kind: bank
+    keywords: ["state bank of india", "yono sbi", "sbi yono"]
+    keywords_case_sensitive: ["SBI", "YONO"]
+    official_domains: [sbi.co.in, onlinesbi.sbi]
+    affiliate_domains: [sbicard.com, sbilife.co.in, sbimf.com]
+    lookalike_labels: [sbi, onlinesbi, yonosbi]
+  - id: hdfc_bank
+    name: HDFC Bank
+    kind: bank
+    keywords: ["hdfc bank", "hdfcbank"]
+    keywords_case_sensitive: ["HDFC"]
+    official_domains: [hdfcbank.com]
+    affiliate_domains: [hdfclife.com, hdfcergo.com]
+    lookalike_labels: [hdfcbank, hdfc]
+  - id: icici_bank
+    name: ICICI Bank
+    kind: bank
+    keywords: ["icici bank"]
+    keywords_case_sensitive: ["ICICI", "iMobile"]
+    official_domains: [icicibank.com]
+    affiliate_domains: [iciciprulife.com, icicilombard.com]
+    lookalike_labels: [icicibank, icici]
+  - id: axis_bank
+    name: Axis Bank
+    kind: bank
+    keywords: ["axis bank"]
+    official_domains: [axisbank.com]
+    affiliate_domains: []
+    lookalike_labels: [axisbank]
+  - id: kotak
+    name: Kotak Mahindra Bank
+    kind: bank
+    keywords: ["kotak mahindra bank", "kotak bank", "kotak811"]
+    official_domains: [kotak.com]
+    affiliate_domains: []
+    lookalike_labels: [kotak, kotakbank]
+  - id: pnb
+    name: Punjab National Bank
+    kind: bank
+    keywords: ["punjab national bank"]
+    keywords_case_sensitive: ["PNB"]
+    official_domains: [pnbindia.in]
+    affiliate_domains: []
+    lookalike_labels: [pnbindia, pnb]
+  - id: bank_of_baroda
+    name: Bank of Baroda
+    kind: bank
+    keywords: ["bank of baroda", "bob world"]
+    official_domains: [bankofbaroda.in]
+    affiliate_domains: []
+    lookalike_labels: [bankofbaroda]
+  - id: npci_upi
+    name: NPCI / BHIM UPI
+    kind: payments
+    keywords: ["bhim upi", "national payments corporation of india"]
+    keywords_case_sensitive: ["NPCI", "BHIM"]
+    official_domains: [npci.org.in, bhimupi.org.in]
+    affiliate_domains: []
+    lookalike_labels: [npci, bhimupi]
+  - id: paytm
+    name: Paytm
+    kind: payments
+    keywords: ["paytm"]
+    official_domains: [paytm.com, paytmbank.com]
+    affiliate_domains: [paytmmoney.com]
+    lookalike_labels: [paytm]
+  - id: phonepe
+    name: PhonePe
+    kind: payments
+    keywords: ["phonepe"]
+    official_domains: [phonepe.com]
+    affiliate_domains: []
+    lookalike_labels: [phonepe]
+  - id: rbi
+    name: Reserve Bank of India
+    kind: government
+    keywords: ["reserve bank of india"]
+    keywords_case_sensitive: ["RBI"]
+    official_domains: [rbi.org.in]
+    affiliate_domains: []
+    lookalike_labels: [rbi]
+  - id: income_tax
+    name: Income Tax Department
+    kind: government
+    keywords: ["income tax department", "income tax refund", "e-filing portal"]
+    official_domains: [incometax.gov.in, incometaxindia.gov.in]
+    affiliate_domains: []
+    lookalike_labels: [incometax, incometaxindia]
+  - id: india_post
+    name: India Post
+    kind: government
+    keywords: ["india post", "department of posts", "speed post"]
+    official_domains: [indiapost.gov.in]
+    affiliate_domains: [ippbonline.com]
+    lookalike_labels: [indiapost]
+  - id: uidai
+    name: UIDAI (Aadhaar)
+    kind: government
+    keywords: ["unique identification authority of india", "aadhaar update", "e-aadhaar"]
+    keywords_case_sensitive: ["UIDAI"]
+    official_domains: [uidai.gov.in]
+    affiliate_domains: []
+    lookalike_labels: [uidai, aadhaar]
+  - id: epfo
+    name: EPFO
+    kind: government
+    keywords: ["employees' provident fund", "employees provident fund organisation"]
+    keywords_case_sensitive: ["EPFO", "UAN"]
+    official_domains: [epfindia.gov.in]
+    affiliate_domains: []
+    lookalike_labels: [epfindia, epfo]
+  - id: irctc
+    name: IRCTC
+    kind: other
+    keywords: ["indian railway catering and tourism corporation"]
+    keywords_case_sensitive: ["IRCTC"]
+    official_domains: [irctc.co.in, irctc.com]
+    affiliate_domains: []
+    lookalike_labels: [irctc]
+  - id: lic
+    name: Life Insurance Corporation of India
+    kind: insurance
+    keywords: ["life insurance corporation of india"]
+    keywords_case_sensitive: ["LIC"]
+    official_domains: [licindia.in]
+    affiliate_domains: []
+    lookalike_labels: [licindia]
+  - id: amazon_in
+    name: Amazon India
+    kind: ecommerce
+    keywords: ["amazon.in", "amazon pay"]
+    official_domains: [amazon.in, amazon.com]
+    affiliate_domains: []
+    lookalike_labels: [amazon]
+  - id: flipkart
+    name: Flipkart
+    kind: ecommerce
+    keywords: ["flipkart"]
+    official_domains: [flipkart.com]
+    affiliate_domains: []
+    lookalike_labels: [flipkart]
+# Platform domains where anyone can publish (website builders, hosting, link shorteners).
+# A brand claim on these is not evidence of the brand, and they are never "official".
+user_content_platforms: [blogspot.com, wordpress.com, wixsite.com, weebly.com, github.io, netlify.app, vercel.app, pages.dev, web.app, firebaseapp.com, sites.google.com, glitch.me, herokuapp.com, onrender.com, bit.ly, tinyurl.com]

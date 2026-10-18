@@ -143,6 +143,84 @@ export const RetentionSchema = z
   .strict()
   .refine((r) => r.default_class in r.classes, { message: 'default_class must be one of classes' });
 
+/**
+ * v4 extensions (blueprint v4 §29). Every field has a default so policy files
+ * written for schema_version 1 keep validating unchanged. Governance switches
+ * whose unsafe value is not implemented are literals: they cannot be enabled.
+ */
+export const WebSchema = z
+  .object({
+    session_idle_minutes: positiveInt.max(240).default(30),
+    session_absolute_hours: positiveInt.max(24).default(12),
+    mfa_required: z.boolean().default(true),
+    cookie_secure: z.boolean().default(true),
+    hsts: z.boolean().default(false),
+    login_attempts_per_minute: positiveInt.max(60).default(5),
+    lockout_after_failed_logins: positiveInt.max(50).default(10),
+    lockout_minutes: positiveInt.max(1440).default(15),
+    api_requests_per_second: positiveInt.max(500).default(20),
+    paginated_list_limit_default: positiveInt.max(500).default(50),
+    paginated_list_limit_max: positiveInt.max(1000).default(200),
+    sse_max_connections: positiveInt.max(500).default(50),
+    sse_poll_ms: positiveInt.min(500).max(60_000).default(2000),
+    require_case_scope_for_sensitive_search: z.literal(true).default(true),
+    require_purpose_for_global_search: z.boolean().default(true),
+    intake_max_rows: positiveInt.max(100_000).default(5000),
+    intake_max_mib: positiveNumber.max(100).default(10),
+    upload_max_mib: positiveNumber.max(200).default(25),
+    dashboard_aggregation_cache_seconds: nonNegativeInt.max(3600).default(30),
+    show_utc_and_ist: z.literal(true).default(true),
+  })
+  .strict()
+  .prefault({});
+
+export const GovernanceSchema = z
+  .object({
+    maker_checker_for_external_actions: z.literal(true).default(true),
+    external_notice_autosend_enabled: z.literal(false).default(false),
+    auto_takedown_enabled: z.literal(false).default(false),
+    certificate_autosign: z.literal(false).default(false),
+    analyst_review_required: z.literal(true).default(true),
+    false_positive_override_requires_new_evidence: z.literal(true).default(true),
+    section63_template_source_version: z.string().min(1).default('BSA-2023-Schedule-official'),
+    risk_policy_version: z.string().min(1).default('risk-rules-1'),
+  })
+  .strict()
+  .prefault({});
+
+export const MonitoringSchema = z
+  .object({
+    actioned_target_revisit_enabled: z.boolean().default(true),
+    max_auto_revisits_per_target_per_day: positiveInt.max(6).default(2),
+    default_interval_hours: positiveNumber.default(24),
+    min_interval_hours: positiveNumber.default(6),
+    max_rule_duration_days: positiveInt.max(365).default(90),
+    revisit_priority: z.number().int().min(-1000).max(1000).default(-10),
+    notify_on_resurrection: z.boolean().default(true),
+  })
+  .strict()
+  .prefault({});
+
+export const EnrichmentSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    dns: z.boolean().default(true),
+    tls: z.boolean().default(true),
+    rdap: z.boolean().default(true),
+    // crt.sh is a third-party service: opt-in only.
+    certificate_transparency: z.boolean().default(false),
+    cache_hours: positiveNumber.default(24),
+    timeout_seconds: positiveNumber.max(60).default(10),
+    max_response_kib: positiveInt.max(10_240).default(512),
+    targets_per_cycle: positiveInt.max(100).default(5),
+    rdap_bootstrap_dns_url: z.string().url().default('https://data.iana.org/rdap/dns.json'),
+    rdap_bootstrap_ipv4_url: z.string().url().default('https://data.iana.org/rdap/ipv4.json'),
+    rdap_bootstrap_ipv6_url: z.string().url().default('https://data.iana.org/rdap/ipv6.json'),
+    ct_search_url: z.string().url().default('https://crt.sh/'),
+  })
+  .strict()
+  .prefault({});
+
 export const PolicySchema = z
   .object({
     schema_version: z.literal(1),
@@ -160,6 +238,10 @@ export const PolicySchema = z
     browser: BrowserSchema,
     extraction: ExtractionSchema,
     retention: RetentionSchema,
+    web: WebSchema,
+    governance: GovernanceSchema,
+    monitoring: MonitoringSchema,
+    enrichment: EnrichmentSchema,
   })
   .strict()
   .superRefine((p, ctx) => {
@@ -199,6 +281,12 @@ export const PolicySchema = z
     }
     if (p.external_providers_enabled) {
       issue(['external_providers_enabled'], 'no external provider adapter is implemented in this release; keep false');
+    }
+    if (p.web.paginated_list_limit_default > p.web.paginated_list_limit_max) {
+      issue(['web', 'paginated_list_limit_default'], 'exceeds paginated_list_limit_max');
+    }
+    if (p.monitoring.min_interval_hours > p.monitoring.default_interval_hours) {
+      issue(['monitoring', 'min_interval_hours'], 'exceeds default_interval_hours');
     }
     if (p.extraction.ai_enabled) {
       issue(['extraction', 'ai_enabled'], 'no AI adapter is configured in this release; keep false');

@@ -8,7 +8,8 @@ import type { Policy } from '../config/policy.js';
 import { MiB } from '../config/policy.js';
 import type { Pool } from '../db/pool.js';
 import { logger } from '../observability/logger.js';
-import { commitAttempt, renewLease, setLeasedState, type DomainEdgeInput } from '../queue/queue.js';
+import { commitAttempt, recordAttemptProgress, recordFirstImage, renewLease, setLeasedState, type DomainEdgeInput } from '../queue/queue.js';
+import { buildManifestContext } from '../evidence/manifestContext.js';
 import type { Lease, RouterDecision } from '../queue/types.js';
 import { decideInfrastructure, type Classified, type RouterJob } from '../router/router.js';
 import { AttemptWriter } from '../storage/artifactStore.js';
@@ -97,6 +98,14 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
   heartbeat.unref();
 
   const writer = new AttemptWriter(args.artifactRoot, lease.attemptId, Math.floor(policy.capture.attempt_artifacts_mib_max * MiB));
+  // First validated viewport image: analysts can see it while the attempt is still finalising (checklist §10).
+  let firstImageReported = false;
+  writer.onArtifact = (rel, entry, data) => {
+    if (firstImageReported || entry.completeness !== 'complete' || entry.metadata?.not_target_content === true) return;
+    if (!['screenshot_early', 'screenshot_settled', 'screenshot_viewport'].includes(entry.type)) return;
+    firstImageReported = true;
+    void recordFirstImage(pool, lease.attemptId, rel, data).catch((err: Error) => logger.debug({ err: err.message }, 'first-image progress not recorded'));
+  };
   const job = routerJobFromLease(lease);
   const requestedUrl = lease.target.url;
   let finalised = false;
@@ -112,6 +121,7 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
       controller.abort(new Error('lease_lost'));
       throw new Error('lease lost before target contact');
     }
+    void recordAttemptProgress(pool, lease.attemptId, 'capturing').catch(() => undefined);
     // Backstop: even if a library call ignores its own timeout, the attempt cannot
     // exceed its deadline by more than a short grace period. The abandoned capture
     // is aborted and its bounded cleanup is awaited (below) before finalising.
@@ -129,6 +139,7 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
       }),
     ]).finally(() => clearTimeout(hardTimer));
     await setLeasedState(pool, lease, 'FINALISING');
+    void recordAttemptProgress(pool, lease.attemptId, 'finalising').catch(() => undefined);
 
     let decided: ReturnType<CaptureOutcome['decide']> | null = null;
     const location = leaseLost ? 'incomplete' : 'captures';
@@ -142,6 +153,10 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
         outcome: decided.classified.outcome, classification: decided.classified.classification,
         requiredArtifacts: lease.job.required_artifacts, requiredSatisfied: contract.satisfied && decided.classified.outcome === 'CONTENT_CAPTURED',
         missingRequired: contract.missing, limitations,
+        ...buildManifestContext({
+          lease, engine: args.engine, adapter: args.adapter, vantage: args.vantage, startedAt,
+          engineVersion: outcome.engineVersion, userAgent: outcome.userAgent, settings: outcome.settings, edges: outcome.edges,
+        }),
       };
     }, location);
     finalised = true;
@@ -153,6 +168,7 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
       totalBytes: fin.totalBytes, activeSeconds, engineVersion: outcome.engineVersion, userAgent: outcome.userAgent,
       settings: { ...outcome.settings, classification_signals: d.classified.signals }, error: null, edges: outcome.edges,
       sessionId: outcome.sessionId ?? null, decision, extractionApplicable: outcome.extractionApplicable,
+      verifiedAtCommit: fin.verifiedAtCommit, reverifyMismatches: fin.reverifyMismatches,
     });
     logger.info({ job: lease.job.id, attempt: lease.attemptId, stage: lease.stage, outcome: d.classified.outcome, classification: d.classified.classification, decision: decision.kind === 'finish' ? decision.state : `${decision.state}:${decision.stage}`, seconds: activeSeconds.toFixed(1), ownership: res.ownershipHeld }, 'attempt committed');
     return { decision, ownershipHeld: res.ownershipHeld };
@@ -190,6 +206,7 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
         outcome: 'INFRASTRUCTURE_DEFERRED', classification: 'infrastructure_error', requiredArtifacts: lease.job.required_artifacts,
         requiredSatisfied: false, missingRequired: evaluateRequired(lease.job.required_artifacts, entries).missing,
         limitations: [`infrastructure error: ${message.slice(0, 300)}`, ...extraLimitations],
+        ...buildManifestContext({ lease, engine: args.engine, adapter: args.adapter, vantage: args.vantage, startedAt, engineVersion: null, userAgent: null, settings: {}, edges: [] }),
       }), 'incomplete');
     } catch (finErr) {
       logger.error({ err: (finErr as Error).message, attempt: lease.attemptId }, 'could not finalise interrupted attempt; reconciler will salvage tmp directory');
@@ -198,7 +215,7 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
       const res = await commitAttempt(pool, policy, lease, {
         status: 'interrupted', manifest: fin?.manifest ?? null, manifestSha256: fin?.manifestSha256 ?? null, artifactDir: fin?.relativeDir ?? null,
         totalBytes: fin?.totalBytes ?? 0, activeSeconds, engineVersion: null, userAgent: null, settings: {}, error: message.slice(0, 1000),
-        edges: [], decision, extractionApplicable: false,
+        edges: [], decision, extractionApplicable: false, verifiedAtCommit: fin?.verifiedAtCommit ?? [], reverifyMismatches: fin?.reverifyMismatches ?? [],
       });
       return { decision, ownershipHeld: res.ownershipHeld };
     } catch (commitErr) {

@@ -35,6 +35,15 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse, url: UR
     res.end(html(`<h1>Scan to pay refund fee</h1><div class="pay"><img id="upi-qr" alt="UPI QR scan to pay" src="/qr.png" width="246" height="246"></div>
       <p>Amount: Rs 499</p>`, 'Pay'));
   },
+  '/parked': (_q, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(html('<h1>refund-desk.example</h1><p>This domain is for sale! Make an offer on this domain.</p><script src="https://sedoparking.com/frmpark/x.js"></script>', 'refund-desk.example')); },
+  '/suspended': (_q, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(html('<h1>Account Suspended</h1><p>This Account has been suspended. Contact your hosting provider for more information.</p>', 'Account Suspended')); },
+  '/isp-blocked': (_q, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(html('<p>The page you have requested has been blocked, as per the directions received from Department of Telecommunications, Government of India.</p>', 'Blocked')); },
+  // The QR pays one VPA while the text shows another: both must be preserved and flagged.
+  '/qr-conflict': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html(`<h1>Pay the merchant</h1><div class="pay"><img id="upi-qr" alt="UPI QR scan to pay" src="/qr.png" width="246" height="246"></div>
+      <p>UPI ID: genuine.merchant@okaxis</p>`, 'Pay merchant'));
+  },
   // Client-rendered SPA: content depends on the URL fragment (never sent to the server).
   '/spa': (_q, res) => {
     res.writeHead(200, { 'content-type': 'text/html' });
