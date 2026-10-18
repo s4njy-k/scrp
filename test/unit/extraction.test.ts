@@ -26,7 +26,9 @@ describe('identifier extraction (§11)', () => {
   });
 
   it('normalises phones and recognises WhatsApp/Telegram destinations', () => {
-    expect(normalisePhone('098765 43210')).toEqual({ normalised: '+919876543210', state: 'format_valid' });
+    expect(normalisePhone('098765 43210')).toMatchObject({ normalised: '+919876543210', state: 'format_valid', type: 'MOBILE' });
+    expect(normalisePhone('1800-11-1109')).toMatchObject({ normalised: '+911800111109', type: 'TOLL_FREE' });
+    expect(normalisePhone('12345').state).toBe('format_invalid');
     const ids = extractFromText(src('Call +91 98765 43210, WhatsApp https://wa.me/919876543210, join t.me/scam_support'));
     expect(byType(ids, 'phone')[0]?.normalisedValue).toBe('+919876543210');
     expect(byType(ids, 'whatsapp')[0]?.normalisedValue).toBe('+919876543210');

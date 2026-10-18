@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { withTransaction } from '../../db/pool.js';
 import { formatIst } from '../../evidence/time.js';
 import { DECISION_VERDICT, REASON_CODES, suppressionState } from '../../investigation/decisions.js';
+import { relatedTargets } from '../../investigation/correlation.js';
+import { domainContext, findLookalikes } from '../../investigation/brands.js';
 import { assertSafeRelative } from '../../storage/artifactStore.js';
 import { assertAttemptAccess, assertTargetAccess, caseByRef, hasRole, jobVisibleSql, seesAllCases } from '../authz.js';
 import { badRequest, conflict, forbidden, queryInt, reply, requireIntId, type Ctx, type RouteSpec } from '../http.js';
@@ -139,6 +141,28 @@ export function investigateRoutes(d: RouteDeps): RouteSpec[] {
           reason_codes: REASON_CODES,
           disclaimer: 'Screenshots are observations of one browser session at the recorded time. Extracted values are leads: format validity does not establish ownership, operability or criminal involvement.',
         };
+      },
+    },
+    {
+      method: 'GET', path: '/api/v1/targets/:id/related', auth: 'full',
+      handler: async (ctx) => {
+        const targetId = requireIntId(ctx.params.id);
+        await assertTargetAccess(d.pool, ctx.user!, targetId);
+        const items = await relatedTargets(d.pool, targetId, { userId: ctx.user!.id, all: seesAllCases(ctx.user!) });
+        await auditCtx(d.pool, ctx, 'correlation_viewed', { results: items.length }, { objectType: 'target', objectId: targetId });
+        return {
+          items,
+          rule: 'Grouped as a possible relationship only with two or more distinct uncommon identifiers (at least one strong). Shared CDN/IP, registrar, analytics IDs, favicons or templates alone never group sites. Frequency counts are within your case scope.',
+        };
+      },
+    },
+    {
+      method: 'GET', path: '/api/v1/targets/:id/lookalikes', auth: 'full',
+      handler: async (ctx) => {
+        const targetId = requireIntId(ctx.params.id);
+        await assertTargetAccess(d.pool, ctx.user!, targetId);
+        const t = (await d.pool.query<{ hostname_ascii: string }>('SELECT hostname_ascii FROM targets WHERE id = $1', [targetId])).rows[0]!;
+        return { context: domainContext(t.hostname_ascii), matches: findLookalikes(t.hostname_ascii), note: 'Lookalike and brand matches are signals for review; legitimate affiliates, agents and research sites exist.' };
       },
     },
     {

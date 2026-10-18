@@ -11,6 +11,7 @@ import { audit, type Pool } from '../../src/db/pool.js';
 import { importText } from '../../src/importer/importer.js';
 import { BrowserWorker } from '../../src/worker/browserWorker.js';
 import { BrowserPool } from '../../src/worker/browserPool.js';
+import { claimNextExtraction, runExtraction } from '../../src/extraction/runner.js';
 import { runVerification } from '../../src/evidence/verify.js';
 import { createCheckpoint, generateSigningKey, sealPending, verifyChain, type CheckpointFile } from '../../src/evidence/custody.js';
 import { createEvidencePackage, verifyPackageDir } from '../../src/evidence/package.js';
@@ -107,12 +108,13 @@ describe.skipIf(!hasDb || !BROWSERS_AVAILABLE)('evidence integrity on a real cap
     pool = await freshDb(policy);
     browsers = new BrowserPool({ mode: 'local', wsEndpoint: null, connectTimeoutMs: 30_000, chromiumSandbox: TEST_CHROMIUM_SANDBOX }, policy, egress);
     const input = `${fixture.url('/static')}?utm_source=sms&b=2&a=1#refund-form`;
-    await importText(pool, policy, `target,case_ref,urgent\n"${input}",CASE-EV-1,true`, { defaultProfile: 'browser_evidence', windowKey: 'w', importedBy: 'test', filename: 'e.csv', format: 'csv' });
+    await importText(pool, policy, `target,case_ref,urgent\n"${input}",CASE-EV-1,true\n${fixture.url('/qr-conflict')},CASE-EV-1,true`, { defaultProfile: 'browser_evidence', windowKey: 'w', importedBy: 'test', filename: 'e.csv', format: 'csv' });
     await pool.query(`INSERT INTO system_state (key, value) VALUES ('clock', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [{ source: 'test chrony', sync_verified: true, offset_ms: 3, recorded_at: new Date().toISOString() }]);
     const worker = new BrowserWorker({ pool, policy, egress, browsers, artifactRoot: root, workerId: 'ev-worker' });
     await worker.runOne();
-    const a = (await pool.query<{ id: string; job_id: number }>(`SELECT id, job_id FROM attempts WHERE status = 'committed' ORDER BY started_at LIMIT 1`)).rows[0]!;
+    await worker.runOne();
+    const a = (await pool.query<{ id: string; job_id: number }>(`SELECT a.id, a.job_id FROM attempts a JOIN jobs j ON j.id = a.job_id JOIN targets t ON t.id = j.target_id WHERE a.status = 'committed' AND t.url LIKE '%/static%' LIMIT 1`)).rows[0]!;
     attemptId = a.id;
     jobId = a.job_id;
   }, 120_000);
@@ -147,6 +149,34 @@ describe.skipIf(!hasDb || !BROWSERS_AVAILABLE)('evidence integrity on a real cap
     expect(states).toEqual(['verified_at_commit']);
   });
 
+  it('preserves a QR payee that differs from the displayed payee, flags the conflict, makes thumbnails and assesses risk', async () => {
+    const policy = testPolicy({ extraction: { ocr_enabled: false } });
+    for (let x = await claimNextExtraction(pool); x; x = await claimNextExtraction(pool)) await runExtraction(pool, policy, root, x);
+    const rows = (await pool.query(`SELECT i.normalised_value, i.method, i.display_context, i.conflicts, i.source_artifact_id, i.extractor_version, i.confidence, i.signal_only
+      FROM identifiers i JOIN targets t ON t.id = i.target_id WHERE t.url LIKE '%/qr-conflict' AND i.field_type = 'upi_vpa'`)).rows;
+    const qr = rows.find((r) => r.method === 'qr');
+    const shown = rows.find((r) => r.method === 'dom' && r.display_context === 'displayed');
+    expect(qr.normalised_value).toBe('fraudster.test@okaxis');
+    expect(shown.normalised_value).toBe('genuine.merchant@okaxis');
+    expect(qr.conflicts[0]).toMatchObject({ kind: 'qr_vs_displayed_text' });
+    expect(shown.conflicts[0].detail).toMatch(/QR pays fraudster.test@okaxis/);
+    expect(qr.source_artifact_id).toBeGreaterThan(0);
+    expect(qr.extractor_version).toMatch(/^extract-/);
+    expect(Number(qr.confidence)).toBeGreaterThan(Number(shown.confidence) - 0.2);
+    const thumbs = (await pool.query(`SELECT a.derived_from, a.metadata, o.artifact_type AS source_type FROM artifacts a JOIN artifacts o ON o.id = a.derived_from WHERE a.artifact_type = 'thumbnail'`)).rows;
+    expect(thumbs.length).toBeGreaterThan(0);
+    expect(thumbs[0].source_type).toMatch(/^screenshot_/);
+    expect(thumbs[0].metadata.width).toBeLessThanOrEqual(360);
+    const risk = (await pool.query(`SELECT r.band, r.signals, r.conflicts FROM risk_assessments r JOIN targets t ON t.id = r.target_id WHERE t.url LIKE '%/qr-conflict'`)).rows[0];
+    expect(risk.signals.map((s: { code: string }) => s.code)).toContain('qr_payment_code');
+    expect(risk.conflicts.map((c: { code: string }) => c.code)).toContain('identifier_conflict');
+    // Verification covers the derivatives too.
+    const job = (await pool.query(`SELECT j.id FROM jobs j JOIN targets t ON t.id = j.target_id WHERE t.url LIKE '%/qr-conflict'`)).rows[0].id;
+    const v = await runVerification(pool, root, 'job', String(job), 'tester');
+    expect(v.result).toBe('pass');
+    expect(v.attempts[0]!.artifacts.some((c) => c.derivative && c.type === 'thumbnail')).toBe(true);
+  });
+
   it('Verify Evidence passes on untouched bytes and fails on modified or missing files', async () => {
     const pass = await runVerification(pool, root, 'job', String(jobId), 'tester');
     expect(pass.result).toBe('pass');
@@ -173,7 +203,7 @@ describe.skipIf(!hasDb || !BROWSERS_AVAILABLE)('evidence integrity on a real cap
     expect(missing.attempts[0]!.artifacts.find((c) => c.path === 'dom/rendered.html')?.status).toBe('missing');
     await writeFile(shot, html);
     expect((await runVerification(pool, root, 'attempt', attemptId, 'tester')).result).toBe('pass');
-    const events = (await pool.query(`SELECT outcome FROM audit_events WHERE event_type = 'evidence_verified' ORDER BY id`)).rows.map((r) => r.outcome);
+    const events = (await pool.query(`SELECT outcome FROM audit_events WHERE event_type = 'evidence_verified' AND object_id <> (SELECT j.id::text FROM jobs j JOIN targets t ON t.id = j.target_id WHERE t.url LIKE '%/qr-conflict') ORDER BY id`)).rows.map((r) => r.outcome);
     expect(events).toEqual(['pass', 'fail', 'fail', 'fail', 'pass']);
   });
 

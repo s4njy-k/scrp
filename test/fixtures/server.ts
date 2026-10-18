@@ -35,6 +35,12 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse, url: UR
     res.end(html(`<h1>Scan to pay refund fee</h1><div class="pay"><img id="upi-qr" alt="UPI QR scan to pay" src="/qr.png" width="246" height="246"></div>
       <p>Amount: Rs 499</p>`, 'Pay'));
   },
+  // The QR pays one VPA while the text shows another: both must be preserved and flagged.
+  '/qr-conflict': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html(`<h1>Pay the merchant</h1><div class="pay"><img id="upi-qr" alt="UPI QR scan to pay" src="/qr.png" width="246" height="246"></div>
+      <p>UPI ID: genuine.merchant@okaxis</p>`, 'Pay merchant'));
+  },
   // Client-rendered SPA: content depends on the URL fragment (never sent to the server).
   '/spa': (_q, res) => {
     res.writeHead(200, { 'content-type': 'text/html' });
