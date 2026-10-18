@@ -40,6 +40,7 @@ const MIME: Record<string, string> = {
 export class ApiApp {
   private readonly routes: ReturnType<typeof compile>[] = [];
   private readonly loginLimiter: RateLimiter;
+  private readonly loginAddressLimiter: RateLimiter;
   private readonly apiLimiter: RateLimiter;
   readonly sessionPolicy: SessionPolicy;
   private server: Server | null = null;
@@ -48,12 +49,15 @@ export class ApiApp {
   constructor(readonly deps: AppDeps) {
     const w = deps.policy.web;
     this.loginLimiter = new RateLimiter(w.login_attempts_per_minute / 60, w.login_attempts_per_minute);
+    this.loginAddressLimiter = new RateLimiter((w.login_attempts_per_minute * 20) / 60, w.login_attempts_per_minute * 20);
     this.apiLimiter = new RateLimiter(w.api_requests_per_second, w.api_requests_per_second * 3);
     this.sessionPolicy = { idleMinutes: w.session_idle_minutes, absoluteHours: w.session_absolute_hours, mfaRequired: w.mfa_required };
   }
 
   register(...specs: RouteSpec[]): void {
     for (const s of specs) this.routes.push(compile(s));
+    // Literal paths win over parameterised ones (e.g. /jobs/events before /jobs/:id).
+    this.routes.sort((a, b) => a.keys.length - b.keys.length);
   }
 
   /** Route table for documentation tests (OpenAPI coverage). */
@@ -124,10 +128,8 @@ export class ApiApp {
       }
     }
 
-    // Rate limits: login by client address, everything else by user (or address when anonymous).
     const bucket = route.rateBucket ?? 'api';
-    const limiter = bucket === 'login' ? this.loginLimiter : this.apiLimiter;
-    if (!limiter.take(`${bucket}:${bucket === 'login' ? ip : user?.id ?? ip}`)) {
+    if (bucket !== 'login' && !this.apiLimiter.take(`api:${user?.id ?? ip}`)) {
       throw new HttpError(429, 'rate_limited', 'too many requests; slow down');
     }
 
@@ -168,6 +170,15 @@ export class ApiApp {
             throw new HttpError(400, 'invalid_json', 'request body is not valid JSON');
           }
         }
+      }
+    }
+
+    if (bucket === 'login') {
+      // Analysts usually share one tunnel address, so credential attempts are limited per
+      // account (or signed-in user) and per address, with a looser cap on the address alone.
+      const account = user?.id ?? (body && typeof (body as { username?: unknown }).username === 'string' ? String((body as { username: string }).username).toLowerCase().slice(0, 64) : '-');
+      if (!this.loginLimiter.take(`login:${ip}:${account}`) || !this.loginAddressLimiter.take(`login-ip:${ip}`)) {
+        throw new HttpError(429, 'rate_limited', 'too many sign-in attempts; wait a minute');
       }
     }
 

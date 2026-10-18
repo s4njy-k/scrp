@@ -66,6 +66,8 @@ export interface IntakeOptions {
   dryRun?: boolean;
   maxRows?: number;
   actorKind?: 'service' | 'user' | 'operator';
+  /** Batch-level defaults (e.g. urgent, priority, capture_variant); values in a record win. */
+  recordDefaults?: Record<string, unknown>;
 }
 
 export interface LineResult {
@@ -275,7 +277,7 @@ export async function importRecords(
         await rejectLine(line, {}, '', error ?? 'unreadable_record');
         continue;
       }
-      const normalised = normaliseRow(raw);
+      const normalised = normaliseRow({ ...(opts.recordDefaults ?? {}), ...raw });
       const parsedRec = ImportRecordSchema.safeParse(normalised);
       const originalInput = typeof normalised.target === 'string' ? normalised.target : '';
       if (!parsedRec.success) {

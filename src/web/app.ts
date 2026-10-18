@@ -2,6 +2,9 @@
 import { ApiApp, type AppDeps } from './server.js';
 import { authRoutes } from './routes/auth.js';
 import { caseRoutes } from './routes/cases.js';
+import { evidenceRoutes } from './routes/evidence.js';
+import { investigateRoutes } from './routes/investigate.js';
+import { jobRoutes } from './routes/jobs.js';
 
 export function buildApp(deps: AppDeps): ApiApp {
   const app = new ApiApp(deps);
@@ -13,6 +16,9 @@ export function buildApp(deps: AppDeps): ApiApp {
     } },
     ...authRoutes(d),
     ...caseRoutes(d),
+    ...jobRoutes(d),
+    ...evidenceRoutes(d),
+    ...investigateRoutes(d),
   );
   return app;
 }

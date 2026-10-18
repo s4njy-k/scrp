@@ -98,11 +98,13 @@ function readPart(buf: Buffer, e: ZipEntry, limits: XlsxLimits, budget: { used: 
   if (e.method === 0) out = Buffer.from(data);
   else if (e.method === 8) {
     try {
-      out = inflateRawSync(data, { maxOutputLength: Math.max(1, Math.min(limits.maxPartBytes, remaining)) });
+      // Never inflate beyond the size the archive declares: a lying header cannot expand further.
+      out = inflateRawSync(data, { maxOutputLength: Math.max(1, Math.min(e.size, limits.maxPartBytes, remaining)) });
     } catch (err) {
       throw new XlsxError('xlsx_inflate_failed', `${e.name}: ${(err as Error).message.slice(0, 120)}`);
     }
   } else throw new XlsxError('xlsx_unsupported_compression', `${e.name} uses ZIP method ${e.method}`);
+  if (out.length !== e.size) throw new XlsxError('xlsx_size_mismatch', `${e.name} inflated to ${out.length} bytes but declares ${e.size}`);
   budget.used += out.length;
   if (budget.used > limits.maxTotalInflatedBytes) throw new XlsxError('xlsx_too_large', 'workbook inflates beyond the intake limit');
   return out.toString('utf8');

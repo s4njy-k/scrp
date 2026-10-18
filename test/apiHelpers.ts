@@ -35,7 +35,7 @@ export class ApiClient {
     const headers: Record<string, string> = { ...(opts.headers ?? {}) };
     if (this.cookie) headers.cookie = this.cookie;
     if (this.csrf && method !== 'GET' && !('x-csrf-token' in headers)) headers['x-csrf-token'] = this.csrf;
-    let payload: string | Buffer | undefined;
+    let payload: string | Uint8Array | undefined;
     if (opts.raw !== undefined) {
       payload = opts.raw;
       headers['content-type'] = opts.contentType ?? 'application/octet-stream';
@@ -43,7 +43,7 @@ export class ApiClient {
       payload = JSON.stringify(body);
       headers['content-type'] = 'application/json';
     }
-    const res = await fetch(`${this.base}${path}`, { method, headers, body: payload });
+    const res = await fetch(`${this.base}${path}`, { method, headers, body: payload as BodyInit | undefined });
     const setCookie = res.headers.get('set-cookie');
     if (setCookie) {
       const v = /cwc_session=([^;]*)/.exec(setCookie)?.[1];
