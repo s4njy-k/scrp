@@ -52,23 +52,25 @@ async function recordRecoveredAttempt(pool: Pool, attemptId: string, relDir: str
     const upd = await client.query(
       `UPDATE attempts SET status = $2, artifact_dir = $3, manifest_sha256 = $4, outcome = $5, classification = $6,
           required_satisfied = $7, missing_required = $8, ended_at = COALESCE(ended_at, $9::timestamptz),
-          error = COALESCE(error, $10), extraction_state = CASE WHEN $2 = 'recovered' THEN 'pending' ELSE 'not_applicable' END
+          error = COALESCE(error, $10), manifest_version = $11, extraction_state = CASE WHEN $2 = 'recovered' THEN 'pending' ELSE 'not_applicable' END
         WHERE id = $1 AND status IN ('pending', 'interrupted')`,
       [attemptId, status, relDir, manifestSha, manifest.outcome, manifest.classification, manifest.requiredSatisfied, manifest.missingRequired, manifest.endedAt,
-       status === 'recovered' ? 'recovered after crash between directory rename and database commit' : 'interrupted; partial artifacts salvaged'],
+       status === 'recovered' ? 'recovered after crash between directory rename and database commit' : 'interrupted; partial artifacts salvaged',
+       manifest.manifestVersion ?? 1],
     );
     if (upd.rowCount !== 1) return;
     await client.query('DELETE FROM artifacts WHERE attempt_id = $1 AND NOT is_derivative', [attemptId]);
     for (const a of manifest.artifacts) {
       const bad = a.path ? mismatches.includes(a.path) : false;
       await client.query(
-        `INSERT INTO artifacts (attempt_id, artifact_type, relative_path, size_bytes, sha256, observed_start, observed_end, creation_method, completeness, limitations, restricted, error, metadata)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        `INSERT INTO artifacts (attempt_id, artifact_type, relative_path, size_bytes, sha256, observed_start, observed_end, creation_method, completeness, limitations, restricted, error, metadata, verification_state, last_verified_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, CASE WHEN $14 = 'verified' THEN now() ELSE NULL END)`,
         [attemptId, a.type, a.path, a.sizeBytes, a.sha256, a.observedStart, a.observedEnd, a.creationMethod, bad ? 'failed' : a.completeness,
-         bad ? [...a.limitations, 'hash mismatch at reconciliation'] : a.limitations, a.restricted ?? false, bad ? 'hash mismatch at reconciliation' : a.error ?? null, a.metadata ?? {}],
+         bad ? [...a.limitations, 'hash mismatch at reconciliation'] : a.limitations, a.restricted ?? false, bad ? 'hash mismatch at reconciliation' : a.error ?? null, a.metadata ?? {},
+         !a.path || !a.sha256 ? 'not_applicable' : bad ? 'mismatch' : 'verified'],
       );
     }
-    await audit(client, 'reconciler', status === 'recovered' ? 'orphan_final_directory_recovered' : 'tmp_directory_salvaged', { dir: relDir, mismatches }, { jobId: manifest.jobId, attemptId });
+    await audit(client, 'reconciler', status === 'recovered' ? 'orphan_final_directory_recovered' : 'tmp_directory_salvaged', { dir: relDir, mismatches, manifest_sha256: manifestSha }, { jobId: manifest.jobId, attemptId, objectType: 'attempt', objectId: attemptId });
   });
 }
 

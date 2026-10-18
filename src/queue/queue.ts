@@ -10,7 +10,7 @@
  *  - Execution is at-least-once: after a crash a site may be visited again.
  *    Result commits are idempotent instead of claiming exactly-once access.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Policy } from '../config/policy.js';
 import type { AttemptManifest, JobStage } from '../acquisition/contract.js';
 import { audit, withTransaction, type Pool, type PoolClient, type Queryable } from '../db/pool.js';
@@ -133,6 +133,12 @@ export async function leaseNext(pool: Pool, policy: Policy, req: LeaseRequest): 
       );
 
       const target = await client.query<TargetRow>('SELECT * FROM targets WHERE id = $1', [job.target_id]);
+      const seeds = await client.query<{ original_input: string; case_ref: string | null }>(
+        `SELECT s.original_input, s.case_ref FROM job_sources js JOIN source_records s ON s.id = js.source_record_id
+          WHERE js.job_id = $1 ORDER BY s.id LIMIT 50`,
+        [job.id],
+      );
+      const clock = await client.query<{ value: Record<string, unknown> }>(`SELECT value FROM system_state WHERE key = 'clock'`);
       await audit(client, req.workerId, 'lease_acquired', { token, stage: job.stage, permit_slot: permitSlot, attempt_seconds: attemptSeconds }, { jobId: job.id, attemptId });
 
       return {
@@ -146,6 +152,9 @@ export async function leaseNext(pool: Pool, policy: Policy, req: LeaseRequest): 
         attemptNo,
         attemptSeconds,
         leasedAt: new Date(),
+        originalInputs: [...new Set(seeds.rows.map((r) => r.original_input))].slice(0, 20),
+        caseRefs: [...new Set([...(job.case_ref ? [job.case_ref] : []), ...seeds.rows.map((r) => r.case_ref).filter((c): c is string => Boolean(c))])],
+        clock: clock.rows[0]?.value ?? null,
       } satisfies Lease;
     }
     return null;
@@ -178,6 +187,25 @@ export async function renewLease(pool: Pool, lease: Lease, leaseSeconds: number)
     }
     return true;
   });
+}
+
+/** Informational progress for the live job view; only a pending attempt is updated. */
+export async function recordAttemptProgress(db: Queryable, attemptId: string, stage: string): Promise<void> {
+  await db.query(`UPDATE attempts SET progress_stage = $2, progress_at = now() WHERE id = $1 AND status = 'pending'`, [attemptId, stage]);
+}
+
+/**
+ * Record the first validated viewport image while the attempt is still open.
+ * The file lives in tmp/<attempt>/ until finalisation moves it; readers verify
+ * the recorded hash before serving it and label it provisional.
+ */
+export async function recordFirstImage(db: Queryable, attemptId: string, rel: string, data: Buffer): Promise<void> {
+  const sha = createHash('sha256').update(data).digest('hex');
+  await db.query(
+    `UPDATE attempts SET first_image_rel = $2, first_image_sha256 = $3, first_image_at = now(), progress_stage = 'first_image_ready', progress_at = now()
+      WHERE id = $1 AND status = 'pending' AND first_image_rel IS NULL`,
+    [attemptId, rel, sha],
+  );
 }
 
 export async function setLeasedState(pool: Pool, lease: Lease, state: 'CAPTURING' | 'FINALISING'): Promise<boolean> {
@@ -253,6 +281,25 @@ export interface AttemptResult {
   decision: RouterDecision;
   /** HTTP body extraction is not applicable to some outcomes (e.g. DNS failure). */
   extractionApplicable: boolean;
+  /** Paths re-hashed in the final directory after the atomic rename (AttemptWriter.finalise). */
+  verifiedAtCommit?: string[];
+  reverifyMismatches?: string[];
+}
+
+/** Record every manifest entry, with its post-rename verification state. Shared by commit and reconciliation. */
+export async function insertManifestArtifacts(client: Queryable, attemptId: string, m: AttemptManifest, verified: readonly string[], mismatches: readonly string[]): Promise<void> {
+  const ok = new Set(verified);
+  const bad = new Set(mismatches);
+  for (const a of m.artifacts) {
+    const state = !a.path ? 'not_applicable' : bad.has(a.path) ? 'mismatch' : ok.has(a.path) ? 'verified_at_commit' : 'unverified';
+    await client.query(
+      `INSERT INTO artifacts (attempt_id, artifact_type, relative_path, size_bytes, sha256, observed_start, observed_end,
+          creation_method, completeness, limitations, restricted, is_derivative, error, metadata, verification_state, last_verified_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, CASE WHEN $15 = 'verified_at_commit' THEN now() ELSE NULL END)`,
+      [attemptId, a.type, a.path, a.sizeBytes, a.sha256, a.observedStart, a.observedEnd, a.creationMethod,
+       a.completeness, a.limitations, a.restricted ?? false, a.isDerivative ?? false, a.error ?? null, a.metadata ?? {}, state],
+    );
+  }
 }
 
 function hostOf(url: string | null): string | null {
@@ -288,6 +335,7 @@ export async function commitAttempt(pool: Pool, policy: Policy, lease: Lease, re
 
     await client.query(
       `UPDATE attempts SET status = $2, outcome = $3, classification = $4, error = $5, ended_at = now(),
+          manifest_version = $18, progress_stage = 'committed', progress_at = now(),
           active_seconds = $6, artifact_dir = $7, manifest_sha256 = $8, total_bytes = $9,
           required_satisfied = $10, missing_required = $11, engine_version = $12, user_agent = $13,
           settings = settings || $14::jsonb, session_id = COALESCE($15, session_id),
@@ -298,20 +346,12 @@ export async function commitAttempt(pool: Pool, policy: Policy, lease: Lease, re
        result.activeSeconds, result.artifactDir, result.manifestSha256, result.totalBytes,
        m?.requiredSatisfied ?? false, m?.missingRequired ?? null, result.engineVersion, result.userAgent,
        result.settings, result.sessionId ?? null,
-       result.artifactDir && result.extractionApplicable ? 'pending' : 'not_applicable', retentionDays],
+       result.artifactDir && result.extractionApplicable ? 'pending' : 'not_applicable', retentionDays, m?.manifestVersion ?? null],
     );
 
     if (m) {
       await client.query('DELETE FROM artifacts WHERE attempt_id = $1', [lease.attemptId]); // idempotent re-commit after reconcile
-      for (const a of m.artifacts) {
-        await client.query(
-          `INSERT INTO artifacts (attempt_id, artifact_type, relative_path, size_bytes, sha256, observed_start, observed_end,
-              creation_method, completeness, limitations, restricted, is_derivative, error, metadata)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-          [lease.attemptId, a.type, a.path, a.sizeBytes, a.sha256, a.observedStart, a.observedEnd, a.creationMethod,
-           a.completeness, a.limitations, a.restricted ?? false, a.isDerivative ?? false, a.error ?? null, a.metadata ?? {}],
-        );
-      }
+      await insertManifestArtifacts(client, lease.attemptId, m, result.verifiedAtCommit ?? [], result.reverifyMismatches ?? []);
     }
     await client.query('DELETE FROM domain_edges WHERE attempt_id = $1', [lease.attemptId]);
     for (const e of result.edges) {
@@ -332,7 +372,9 @@ export async function commitAttempt(pool: Pool, policy: Policy, lease: Lease, re
     await audit(client, lease.workerId, 'attempt_committed', {
       token: lease.token, outcome: m?.outcome, classification: m?.classification, decision: result.decision,
       required_satisfied: m?.requiredSatisfied, missing: m?.missingRequired,
-    }, { jobId: lease.job.id, attemptId: lease.attemptId });
+      manifest_sha256: result.manifestSha256, artifact_dir: result.artifactDir, total_bytes: result.totalBytes,
+      artifacts_verified_at_commit: result.verifiedAtCommit?.length ?? 0, reverify_mismatches: result.reverifyMismatches ?? [],
+    }, { jobId: lease.job.id, attemptId: lease.attemptId, objectType: 'attempt', objectId: lease.attemptId, outcome: m?.outcome ?? null, caseRef: lease.job.case_ref });
     return { ownershipHeld };
   });
 }

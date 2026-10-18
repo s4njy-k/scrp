@@ -19,9 +19,10 @@ import { evaluateAdmission } from './admission.js';
 import { applyRetention } from './retention.js';
 import { claimNextExtraction, resetStaleExtractions, runExtraction } from '../extraction/runner.js';
 import { writeExport } from '../export/exporter.js';
+import { sealPending } from '../evidence/custody.js';
 
 export async function ensureArtifactLayout(root: string): Promise<void> {
-  for (const d of ['tmp', 'captures', 'incomplete', 'derived', 'exports']) await mkdir(join(root, d), { recursive: true, mode: 0o750 });
+  for (const d of ['tmp', 'captures', 'incomplete', 'derived', 'exports', 'reports', 'packages', 'uploads']) await mkdir(join(root, d), { recursive: true, mode: 0o750 });
 }
 
 export async function runCoordinator(pool: Pool, policy: Policy, root: string): Promise<void> {
@@ -60,6 +61,8 @@ export async function runCoordinator(pool: Pool, policy: Policy, root: string): 
 
   const timers = [
     every(30_000, 'reconcile', () => reconcile(pool, policy, root)),
+    // Seal committed audit events into the custody hash chain within seconds.
+    every(2_000, 'custody-seal', async () => { while ((await sealPending(pool)) >= 1000) { /* drain backlog */ } }),
     every(30_000, 'admission', async () => evaluateAdmission(pool, policy, root, await gatewayHealthy(egress))),
     every(10_000, 'heartbeat', async () => { for (const s of sources) await recordHeartbeat(pool, s, startedAt); }),
     every(3_600_000, 'retention', () => applyRetention(pool, policy, root, { deleteEnabled: process.env.RETENTION_DELETE_ENABLED === 'true' })),

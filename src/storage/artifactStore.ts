@@ -90,6 +90,8 @@ export class AttemptWriter {
   private sealed = false;
   private readonly streams: { stream: WriteStream; done: Promise<void> }[] = [];
   readonly budgetEvents: string[] = [];
+  /** Notified after each whole-file artifact is saved (progress reporting; never blocks the write path). */
+  onArtifact: ((rel: string, entry: Omit<PendingEntry, 'path'>, data: Buffer) => void) | null = null;
 
   constructor(
     readonly root: string,
@@ -143,6 +145,9 @@ export class AttemptWriter {
     this.track(task);
     await task;
     this.entries.push({ ...entry, path: rel });
+    try {
+      this.onArtifact?.(rel, entry, buf);
+    } catch { /* progress reporting must never fail a capture */ }
     return true;
   }
 
@@ -228,6 +233,10 @@ export class AttemptWriter {
     location: 'captures' | 'incomplete' = 'captures',
   ): Promise<{
     relativeDir: string; manifest: AttemptManifest; manifestSha256: string; totalBytes: number;
+    /** Paths whose bytes were re-opened in the final directory after the rename and matched their manifest hash. */
+    verifiedAtCommit: string[];
+    /** Paths whose re-read after the rename did not match (should never happen; recorded, not hidden). */
+    reverifyMismatches: string[];
   }> {
     this.sealed = true;
     const artifacts: ManifestEntry[] = [];
@@ -254,7 +263,7 @@ export class AttemptWriter {
       }
     }
     const resolvedBase = typeof base === 'function' ? base(artifacts) : base;
-    const manifest: AttemptManifest = { manifestVersion: 1, ...resolvedBase, artifacts };
+    const manifest: AttemptManifest = { manifestVersion: resolvedBase.navigationUrl ? 2 : 1, ...resolvedBase, artifacts };
     const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
     const manifestPath = join(this.tmpDir, 'manifest.json');
     await writeFile(manifestPath, manifestText, { mode: 0o640 });
@@ -269,7 +278,19 @@ export class AttemptWriter {
     await mkdir(dirname(finalDir), { recursive: true, mode: 0o750 });
     await rename(this.tmpDir, finalDir);
     await fsyncPath(dirname(finalDir));
-    return { relativeDir, manifest, manifestSha256, totalBytes: totalBytes + Buffer.byteLength(manifestText) };
+    // Re-open every saved file in its final location and re-hash it: a status of
+    // 'verified_at_commit' means these exact bytes are what the manifest describes.
+    const verifiedAtCommit: string[] = [];
+    const reverifyMismatches: string[] = [];
+    for (const a of artifacts) {
+      if (!a.path || !a.sha256) continue;
+      const again = await sha256File(join(finalDir, a.path)).catch(() => null);
+      if (again && again.sha256 === a.sha256) verifiedAtCommit.push(a.path);
+      else reverifyMismatches.push(a.path);
+    }
+    const manifestAgain = await sha256File(join(finalDir, 'manifest.json')).catch(() => null);
+    if (manifestAgain?.sha256 !== manifestSha256) reverifyMismatches.push('manifest.json');
+    return { relativeDir, manifest, manifestSha256, totalBytes: totalBytes + Buffer.byteLength(manifestText), verifiedAtCommit, reverifyMismatches };
   }
 }
 
