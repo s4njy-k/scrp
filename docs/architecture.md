@@ -8,7 +8,7 @@ This document maps the implementation onto the blueprint. Section numbers (§) r
 |---|---|---|---|---|
 | `coordinator` | `src/coordinator/main.ts` | Migrations, reconciliation, admission control, HTTP triage (`AutoscaledPool`, ≤ 8), extraction (QR, OCR serialised), retention, daily export, liveness | control, triage | 1.5 GiB / 0.3 |
 | `browser-worker` (1 replica) | `src/worker/` | Leases browser jobs and global permits; drives the **remote** engine over a private Playwright connection; owns each context; writes artifacts | control, acquisition | 0.75 GiB / 0.1 |
-| `browser-engine` | `docker/browser-engine.Dockerfile` | `playwright run-server` with sandboxed Chromium (and Firefox for the one alternate attempt); no DB credentials, no artifact mount | acquisition | 5.5 GiB / 1.2 |
+| `browser-engine` | `docker/browser-engine.Dockerfile` | `playwright run-server` with sandboxed Chromium (and Firefox for the one alternate attempt); no DB credentials, no artifact mount | acquisition | 5 GiB / 1.1 (512 MiB / 0.1 reallocated to `api`) |
 | `postgres` | `db/migrations/` | Only scheduler of record | control | 1.5 GiB / 0.3 |
 | `egress-gateway` | `src/gateway/` | Connection-time destination policy for HTTP, HTTPS (CONNECT) and WebSocket | egress, acquisition, triage | 0.5 GiB / 0.1 |
 | `scrapling-worker` (profile `scrapling`) | `scrapling-worker/` | Optional alternate adapter, at most one global permit | control, acquisition | shares the envelope |

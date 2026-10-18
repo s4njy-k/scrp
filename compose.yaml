@@ -4,7 +4,9 @@
 #   docker --context rootless compose -p cyber-web-collector build
 #   docker --context rootless compose -p cyber-web-collector up -d --scale browser-worker=1
 #
-# Network topology (no service publishes a port on the host):
+# Network topology (no acquisition service publishes a port; the optional
+# analyst console publishes one port on host LOOPBACK only - reach it through
+# an SSH tunnel, never a public listener):
 #
 #   egress (bridge, Internet) ── egress-gateway ── acquisition (internal) ── browser-engine
 #                                      │                    │
@@ -17,9 +19,15 @@
 #    database credentials or control-network route.
 #  * The gateway is the only container on a non-internal network.
 #  * PostgreSQL is reachable only on the control network.
+#  * api (profile "console") joins control plus a NAT-less "console" bridge used
+#    solely to publish 127.0.0.1:${API_HOST_PORT}; it does not join acquisition
+#    or triage and has no route to target sites.
 #
 # Resource envelope (proposed caps for evaluation, not measured requirements):
-# aggregate ~2.0 vCPU and 9.75 GiB memory ceilings across the five services.
+# aggregate ~2.0 vCPU and 9.75 GiB memory ceilings across the six services.
+# The analyst API's 0.1 vCPU / 512 MiB were REALLOCATED from browser-engine
+# (1.2 -> 1.1 vCPU, 5632 -> 5120 MiB) so the console fits the same envelope
+# (blueprint v4 §4, §27) instead of being added on top.
 # Rootless cgroup limits only take effect with cgroup v2 delegation of the
 # cpu/memory/pids controllers - verify with scripts/preflight.sh.
 
@@ -129,8 +137,8 @@ services:
       - /home/pwuser:size=512m,uid=1001,gid=1001
     shm_size: 1g
     networks: [acquisition]
-    cpus: 1.2
-    mem_limit: 5632m
+    cpus: 1.1
+    mem_limit: 5120m
     pids_limit: 1024
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
@@ -153,6 +161,7 @@ services:
       CRAWLEE_STORAGE_DIR: /tmp/crawlee
       EGRESS_PROXY_URL: http://egress-gateway:3128
       EGRESS_VANTAGE_LABEL: ${EGRESS_VANTAGE_LABEL:-vm-public-ip-via-local-gateway}
+      EGRESS_PUBLIC_IP: ${EGRESS_PUBLIC_IP:-}
       MIGRATE_ON_START: "true"
       RETENTION_DELETE_ENABLED: ${RETENTION_DELETE_ENABLED:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -198,6 +207,7 @@ services:
       BROWSER_WS_ENDPOINT: ws://browser-engine:3000/${BROWSER_SERVER_PATH}
       EGRESS_PROXY_URL: http://egress-gateway:3128
       EGRESS_VANTAGE_LABEL: ${EGRESS_VANTAGE_LABEL:-vm-public-ip-via-local-gateway}
+      EGRESS_PUBLIC_IP: ${EGRESS_PUBLIC_IP:-}
       WORKER_MEMORY_MBYTES: "768"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     secrets: [collector_db_password]
@@ -221,6 +231,52 @@ services:
       test: ["CMD", "node", "dist/cli.js", "healthcheck"]
       interval: 30s
       timeout: 10s
+      retries: 3
+
+  # Analyst console and API (opt-in: --profile console). Sessions, MFA, CSRF,
+  # case-scoped authorisation and a strict CSP are enforced by the app itself;
+  # the port is published on host loopback only. Use:
+  #   ssh -N -L 8080:127.0.0.1:${API_HOST_PORT:-8080} operator@collector-vm
+  # then open http://localhost:8080 (create the first admin with
+  # `docker compose exec api node dist/cli.js user create ...`).
+  api:
+    <<: *hardening
+    profiles: [console]
+    image: cyber-web-collector/app:${APP_VERSION:-0.1.0}
+    command: ["serve", "api"]
+    stop_grace_period: 15s
+    read_only: true
+    depends_on:
+      postgres: { condition: service_healthy }
+      coordinator: { condition: service_started }
+    environment:
+      <<: *db-env
+      COLLECTOR_ROLE: api
+      API_BIND: 0.0.0.0
+      API_PORT: "8080"
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    secrets: [collector_db_password]
+    volumes:
+      - ${COLLECTOR_DATA_DIR}/artifacts:/data/artifacts
+      - type: bind
+        source: ./config/policy.yaml
+        target: /app/config/policy.yaml
+        read_only: true
+        bind:
+          create_host_path: false   # fail loudly if the policy file is missing
+    tmpfs:
+      - /tmp:size=64m
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8080}:8080"
+    networks: [control, console]
+    cpus: 0.1
+    mem_limit: 512m
+    pids_limit: 100
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
       retries: 3
 
   # Optional alternate adapter. Disabled unless started with --profile scrapling AND
@@ -280,6 +336,12 @@ networks:
     internal: true
   egress:
     driver: bridge
+  # Publishes the console port only. No masquerade: the api container gets no
+  # outbound Internet route through this bridge.
+  console:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 
 secrets:
   postgres_superuser_password:

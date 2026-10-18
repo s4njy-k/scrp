@@ -52,6 +52,42 @@ jobs:
           mkdir -p ci-secrets && for n in postgres_superuser_password collector_db_password scrapling_db_password; do echo ci > ci-secrets/$n; done
           cp config/policy.default.yaml config/policy.yaml
           COLLECTOR_DATA_DIR=/tmp/cwc BROWSER_SERVER_PATH=ci0123456789abcdef0123456789 COLLECTOR_SECRETS_DIR=$PWD/ci-secrets \
-            docker compose -p cyber-web-collector --profile scrapling config --quiet
+            docker compose -p cyber-web-collector --profile scrapling --profile console config --quiet
       - name: Shell scripts parse
         run: for f in scripts/*.sh docker/browser-engine/start.sh docker/postgres/init-roles.sh; do bash -n "$f"; done
+
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.22.0
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Production dependencies have no known high/critical advisories
+        run: npm audit --omit=dev --audit-level=high
+      - name: Software bill of materials (CycloneDX)
+        run: npm sbom --omit=dev --sbom-format cyclonedx > sbom.cdx.json && node -e "const s=require('./sbom.cdx.json'); if(!s.components?.length) process.exit(1); console.log(s.components.length + ' components')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+          retention-days: 90
+      - name: No secrets or private keys committed
+        run: |
+          ! git ls-files -z | xargs -0 grep -lE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----' 2>/dev/null
+          ! git ls-files | grep -E '^(secrets/[^.]|\.env$|config/policy\.yaml$)'
+
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the application image
+        run: docker build -f docker/app.Dockerfile -t cyber-web-collector/app:ci .
+      - name: Image contains the console and validates its policy as a non-root user
+        run: |
+          docker run --rm --entrypoint sh cyber-web-collector/app:ci -c 'test -f web/index.html && test -f web/js/lib.js && test -f config/brands.yaml && test "$(id -u)" = 10001'
+          docker run --rm cyber-web-collector/app:ci validate-policy > /dev/null
