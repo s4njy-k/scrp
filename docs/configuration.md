@@ -52,7 +52,14 @@ docker --context rootless compose -p cyber-web-collector run --rm --no-deps coor
 | `browser.recycle_after_*` | `BrowserPool` | Reconnect or relaunch |
 | `browser.alternate_engine` | router, worker stages | `firefox` → `browser_alternate`, `scrapling` → `scrapling` stage, `none` |
 | `extraction.*` | `src/extraction/runner.ts` | jsQR; `tesseract` CLI (`--psm 6`, `OMP_THREAD_LIMIT=1`, serialised) |
-| `retention.classes`, `default_class` | `attempts.expires_at`, `applyRetention` | Deletion only with `RETENTION_DELETE_ENABLED=true` |
+| `retention.classes`, `default_class` | `attempts.expires_at`, `applyRetention` | Deletion only with `RETENTION_DELETE_ENABLED=true`. Attempts cited by notices or certificates, or linked to open cases, are never expired. API intake defaults to `case_evidence` |
+| `web.session_*`, `mfa_required`, `cookie_secure`, `hsts` | `src/web/auth.ts`, `http.ts` | Idle/absolute session expiry, TOTP requirement, cookie and HSTS flags |
+| `web.login_attempts_per_minute`, `lockout_*`, `api_requests_per_second` | `src/web/server.ts` rate limiter, login route | Login keyed per account and address (looser per-address cap); API keyed per user |
+| `web.intake_max_rows`, `intake_max_mib`, `upload_max_mib` | `/intake-batches`, `/cases/:id/uploads` | Request body limits; XLSX is also bounded by the defensive reader (`src/importer/xlsx.ts`) |
+| `web.paginated_list_limit_*`, `sse_*`, `dashboard_aggregation_cache_seconds` | list routes, `/jobs/events`, `/analytics` | Cursor pagination, SSE connection cap and poll interval, analytics cache |
+| `governance.*` | `src/actions/legalRoutes.ts`, notice transitions, certificates | Literals: no autosend, no auto-takedown, no autosign, maker-checker, analyst review, override only on new evidence. `section63_template_source_version` names the Schedule text that must be verified |
+| `monitoring.*` | `src/monitoring/monitor.ts` | Revisit interval bounds, per-day cap, priority (below first captures), reappearance alerts |
+| `enrichment.*` | `src/enrichment/enrich.ts`, gateway `/__dns` | DNS/TLS/RDAP through the gateway, cache hours, response caps, per-cycle budget. `certificate_transparency` (crt.sh) is off by default |
 
 ## Environment variables
 
@@ -75,6 +82,11 @@ docker --context rootless compose -p cyber-web-collector run --rm --no-deps coor
 | `HEALTH_PORT`, `HEALTH_BIND` | coordinator, worker | Liveness endpoint (default `127.0.0.1:8081`) |
 | `WORKER_MAX_CONCURRENCY`, `WORKER_MEMORY_MBYTES` | worker | Lower the per-replica cap and give Crawlee a memory basis |
 | `TESSERACT_BIN`, `TESSERACT_LANG` | coordinator | OCR binary and language |
+| `EGRESS_PUBLIC_IP` | coordinator, worker | Operator-declared public egress address, recorded in manifests as declared. Empty means "not observed" |
+| `API_BIND`, `API_PORT` | api | Listener (default `127.0.0.1:8080`; `0.0.0.0` inside the Compose container, published on host loopback only) |
+| `API_HOST_PORT` | Compose | Host loopback port for the console (default 8080) |
+| `METRICS_BEARER_TOKEN` | api | Optional Prometheus scrape token (≥ 24 characters) |
+| `CUSTODY_SIGNING_KEY_FILE` | CLI | Ed25519 private key used by `custody checkpoint` (keep it off the artifact volume) |
 | `CRAWLEE_STORAGE_DIR` | coordinator, worker | Set to `/tmp/crawlee` (tmpfs). The root filesystem is read-only and Crawlee must never write into `/app` |
 
 ## Input format (§6)

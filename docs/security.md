@@ -49,13 +49,37 @@ are disabled or restricted by AppArmor), treat it as a **deployment blocker** an
 * Cookies, authorization headers and storage state are **restricted** artifacts (file mode
   0600, `restricted=true`). Ordinary network event logs redact them. Exports never include
   them. Logs redact cookie, authorization, password and connection-string fields.
-* Raw captured HTML is evidence and must not be rendered in an analyst UI with that UI's
-  privileges. View it as text, or in a sandboxed iframe without script permission on a separate
-  origin. No analyst UI ships in this release.
+* Raw captured HTML is evidence and is never rendered by the analyst console. The console shows
+  captured text and identifiers as text only (DOM built with `textContent`; the helper refuses raw
+  HTML). Downloads of artifacts, reports and uploads are served as attachments with
+  `Content-Security-Policy: default-src 'none'; sandbox`, after re-verifying their hash.
 * Downloads are refused (`acceptDownloads: false`) and logged. Downloaded files are never executed.
 * CSV exports neutralise spreadsheet formula injection (`=`, `+`, `-`, `@` prefixes).
 * Generic recipes never create accounts, submit credentials, make payments, upload documents
   or solve CAPTCHAs. Dialogs are dismissed and logged.
+
+## Analyst console and API
+
+| Control | Implementation |
+|---|---|
+| Exposure | `serve api` binds to loopback by default. In Compose the `api` service (profile `console`) publishes `127.0.0.1:${API_HOST_PORT}` only, on a bridge without IP masquerade, and joins `control` but neither `acquisition` nor `triage`. Reach it through `ssh -L`. Never put it on a public interface |
+| Authentication | scrypt password hashes; database sessions storing only a SHA-256 of the token; idle and absolute expiry; HttpOnly, `SameSite=Strict`, `Secure` cookie (browsers accept `Secure` on `http://localhost` through the tunnel). TOTP MFA (RFC 6238) is required, with replay protection. First sign-in forces a password change. Lockout after repeated failures. Session rotation on MFA and password change |
+| Authorisation | Roles `admin`, `intake`, `analyst`, `approver`, `evidence`, `auditor`, `report` per route. Object-level checks on every case, target, attempt, artifact, notice, certificate and upload through case membership. Objects outside your cases return **404**. Admins see every case but NCRP/FIR references are masked unless they are members |
+| Request integrity | `X-CSRF-Token` on every mutation, plus `Origin` / `Sec-Fetch-Site` checks. Strict JSON bodies with size limits (`.strict()` zod schemas). Per-user API and per-account+address login rate limits. Request IDs on every response and audit event |
+| Browser hardening | `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'` (see `src/web/http.ts`), plus `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin`, a restrictive `Permissions-Policy` and optional HSTS (`web.hsts`). The console has no third-party code; the browser smoke test fails on any CSP violation |
+| Accountability | Reads of manifests, artifacts and reports, searches of protected identifiers, decisions, approvals, uploads and downloads are written to the hash-chained audit log with actor, case, object, outcome and request ID |
+| Governance | Maker-checker on review and approval (the author cannot approve). Notices are never sent, documents never signed, nothing taken down by the system: `governance.external_notice_autosend_enabled`, `auto_takedown_enabled` and `certificate_autosign` are literal `false`, and `maker_checker_for_external_actions`, `analyst_review_required` and `false_positive_override_requires_new_evidence` literal `true`, in the policy schema |
+| Metrics | `/api/v1/metrics` needs a bearer token (`METRICS_BEARER_TOKEN`, ≥ 24 characters) or an admin/auditor session. It exposes counts and latencies, never identifiers |
+
+## Custody chain
+
+Audit events are sealed into a SHA-256 hash chain every few seconds (`custody seal` runs in the
+coordinator). A database trigger refuses updates and deletes except the one-time seal. `custody
+checkpoint` writes a signed (Ed25519) checkpoint of the chain head. **Store checkpoint files
+outside the collector's administrative control** (for example, email them to the case officer or
+keep them on separate institutional storage). `custody verify --checkpoint <file>` then detects a
+rewrite of the history before that point. This is tamper-evident storage. It is not WORM storage and
+must not be described as legally immutable.
 
 ## Telemetry and outbound behaviour
 
@@ -77,4 +101,8 @@ against a schema. Page content can never change egress, install code or trigger 
   `--before=2026-10-01` to leave a review buffer. `npm audit` was clean at commit time.
 * Container bases are pinned by digest. Python adapter dependencies are hash-locked
   (`--require-hashes`).
+* CI runs `npm audit --omit=dev --audit-level=high`, builds a CycloneDX SBOM (kept as a build
+  artifact), checks that no private key, `.env`, secret file or live policy is committed, and
+  builds the application image as a non-root user. Container-image CVE scanning is left to the
+  agency's approved scanner.
 * Updates are tested against the fixtures (`npm test`) before promotion. See [`rollback.md`](rollback.md).

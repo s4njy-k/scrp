@@ -71,6 +71,34 @@ built-in list does not cover, to `GATEWAY_EXTRA_DENY_CIDRS`.
 3. **Sandbox.** Follow [`security.md#sandbox-verification`](security.md#sandbox-verification).
 4. **Canaries.** See section 6.
 
+### Analyst console (optional, profile `console`)
+
+```bash
+# Optional: record the egress public IP so manifests can state it (else "not observed").
+echo 'EGRESS_PUBLIC_IP=203.0.113.10' >> .env
+$DC --profile console up -d api
+# First administrator (one-time password printed once; MFA enrolment at first sign-in):
+$DC exec api node dist/cli.js user create --username admin.one --display-name "Admin One" --roles admin,auditor
+# From the analyst workstation:
+ssh -N -L 8080:127.0.0.1:8080 operator@collector-vm    # then open http://localhost:8080
+```
+
+After the first sign-in:
+
+1. Create the other accounts under **Admin**. Give the least roles needed, and give `approver`
+   to different people from those who draft notices.
+2. An approver records that the Section 63 Schedule template was checked against the official
+   text (**Reports → Record template verification**). Until then no worksheet can be completed.
+3. Generate a custody signing key off the artifact volume and set `CUSTODY_SIGNING_KEY_FILE` for
+   the CLI:
+   `node dist/cli.js custody keygen /secure/custody-ed25519.pem`, then
+   `custody checkpoint --note "weekly"`. Copy each checkpoint file to institutional storage.
+4. Record the clock fact after checking NTP:
+   `node dist/cli.js clock record --source "chrony: <server>" --synchronized yes --offset-ms <n>`.
+
+Console health: `GET /api/v1/health`. Metrics for Prometheus:
+`curl -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://127.0.0.1:8080/api/v1/metrics`.
+
 ## 3. Daily operation
 
 | Task | Command |
@@ -157,8 +185,8 @@ See [`rollback.md`](rollback.md). Never use `down -v`, and never delete
 |---|---|
 | `validate-policy [path]` | Validates and prints the resolved policy |
 | `migrate` | Applies migrations and syncs permit slots |
-| `serve <coordinator\|browser-worker\|gateway>` | Long-running service roles (Compose `command`) |
-| `import <file>` | `--profile data_triage\|browser_evidence`, `--window <key>`, `--format csv\|jsonl`, `--by <actor>` |
+| `serve <coordinator\|browser-worker\|gateway\|api>` | Long-running service roles (Compose `command`); `api` uses `API_BIND` (default 127.0.0.1) and `API_PORT` (default 8080) |
+| `import <file>` | `--profile data_triage\|browser_evidence`, `--window <key>`, `--format csv\|jsonl\|xlsx\|text`, `--by <actor>` |
 | `export` | `--date YYYY-MM-DD`, `--format jsonl\|csv` |
 | `status` | `--hours <n>` |
 | `job <id>` | — |
@@ -168,6 +196,10 @@ See [`rollback.md`](rollback.md). Never use `down -v`, and never delete
 | `finding <job-id>` | `--assessment`, `--rationale`, `--evidence <json>`, `--by` |
 | `reconcile` | — |
 | `retention` | `--delete` |
-| `verify <attempt-id>` | — |
+| `verify [attempt-id]` | `--job <id>`, `--case <ref>`, `--by`: Verify Evidence; writes a hashed report under `reports/verification/` |
+| `custody seal` / `custody verify` / `custody checkpoint` / `custody keygen <file>` | `verify --checkpoint <file>`; `checkpoint --note --by` |
+| `package create` / `package verify <dir>` | `create --purpose <text> (--job\|--case\|--attempts) [--include-restricted]`; `verify --index-sha256 <hex>` |
+| `clock record` / `clock show` | `--source`, `--synchronized yes\|no`, `--offset-ms` |
+| `user create` / `user reset <username>` / `user list` | `create --username --display-name --roles`; `reset --reset-mfa` |
 | `backup record` / `backup status` | `--destination`, `--independent yes\|no`, `--note` |
 | `healthcheck` | `--port` (Docker healthcheck) |

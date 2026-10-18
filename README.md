@@ -1,7 +1,9 @@
 # cyber-web-collector
 
 Evidence-grade web collection for cybercrime investigation. This is an implementation of
-[`docs/blueprint.md`](docs/blueprint.md) (*Cybercrime Web Collection — Final Deployment Blueprint* v3.0, 17 Oct 2026).
+[`docs/blueprint.md`](docs/blueprint.md) (*Cybercrime Web Collection — Final Deployment Blueprint* v3.0, 17 Oct 2026),
+extended for the *Final Implementation Blueprint v4* and the *v0.3 Improvement Checklist*. Item-by-item status:
+[`docs/checklist-v0.3-status.md`](docs/checklist-v0.3-status.md).
 
 The system has the following parts:
 
@@ -19,7 +21,17 @@ The system has the following parts:
   contract and the same caps as the primary path.
 - **Deterministic extraction** runs only after the originals are saved: DOM and attributes
   first, then JSON, then QR decoding, then selective OCR. AI is not used. Paid APIs and
-  hosted classifiers are absent.
+  hosted classifiers are absent. Every identifier keeps its provenance, extractor version,
+  confidence and review state.
+- **Evidence integrity and custody**: manifests re-verified after commit, a hash-chained
+  append-only custody log with signed checkpoints, a *Verify Evidence* action and evidence
+  packages with a separately recorded index hash.
+- **An analyst console** (optional Compose profile `console`, loopback only, reached through an
+  SSH tunnel). It provides MFA sign-in, case-scoped access, intake, a single-target investigation
+  view, review queues, false-positive suppression and scoped correlation. It also covers legally
+  routed notice drafts with maker-checker and proof-backed issuance records, Section 63 worksheets,
+  monitoring revisits and trustworthy analytics. Nothing is ever sent, signed or taken down by the
+  system. API reference: [`docs/openapi.json`](docs/openapi.json).
 
 > **Status.** The code, migrations, container definitions and tests in this repository are complete
 > for the baseline profile. The system **has not been deployed or benchmarked on the target VM**.
@@ -47,8 +59,13 @@ design aims for zero silent result loss. It does not promise 100% retrieval.
 | `src/extraction/` | Identifiers and validators, QR, OCR, child-page jobs (§11) |
 | `src/gateway/` | Egress gateway (forward proxy with destination policy) (§13) |
 | `src/export/`, `src/observability/` | Daily JSONL/CSV export, status metrics, health and watchdog (§16) |
+| `src/evidence/` | Canonical JSON, IST time, manifest context, custody chain, Verify Evidence, packages (v4 §20–21) |
+| `src/investigation/` | Decisions and suppression, brands and lookalikes, explainable risk, correlation (v4 §22, §25) |
+| `src/actions/` | Legal routes and eligibility, report rendering, Section 63 worksheets (v4 §24, §26) |
+| `src/monitoring/`, `src/enrichment/` | Revisits, change classification, reappearance alerts; DNS/TLS/RDAP through the gateway |
+| `src/web/`, `web/` | Analyst API (router, auth, authorisation, routes, OpenAPI docs) and the strict-CSP console |
 | `db/migrations/` | Forward-only, checksum-verified SQL migrations |
-| `config/` | `policy.default.yaml`, generated `policy.schema.json` |
+| `config/` | `policy.default.yaml`, generated `policy.schema.json`, `brands.yaml` (official domains for lookalike checks) |
 | `docker/`, `compose.yaml` | Pinned images, Chromium seccomp profile, isolated Compose project |
 | `scrapling-worker/` | Optional Python Scrapling adapter (same contract) |
 | `scripts/` | Preflight, secrets, host directories, backup, restore verification, test DB |
@@ -84,6 +101,14 @@ $DC exec coordinator node dist/cli.js verify <attempt-uuid>
 
 Full command reference: [`docs/runbook.md#cli-contract`](docs/runbook.md#cli-contract).
 
+Analyst console (optional; runbook §2 "Analyst console"):
+
+```bash
+$DC --profile console up -d api
+$DC exec api node dist/cli.js user create --username admin.one --display-name "Admin One" --roles admin,auditor
+ssh -N -L 8080:127.0.0.1:8080 operator@collector-vm   # on the workstation, then open http://localhost:8080
+```
+
 ## Development
 
 Requires Node.js 22.19+ (pinned 22.22.0), PostgreSQL 16 binaries for integration tests, and the
@@ -97,6 +122,8 @@ export TEST_DATABASE_URL=$(scripts/test-postgres.sh)   # throwaway local cluster
 PLAYWRIGHT_BROWSERS_PATH=/path/to/browsers npm test     # unit and integration tests
 python3 -I scrapling-worker/tests/test_contract.py -v
 npm run schema                                          # regenerate config/policy.schema.json
+npm run openapi                                         # regenerate docs/openapi.json from the routes
+API_BIND=127.0.0.1 npx tsx src/cli.ts serve api         # console at http://127.0.0.1:8080 (needs DATABASE_URL)
 ```
 
 Integration suites skip themselves when `TEST_DATABASE_URL` or `PLAYWRIGHT_BROWSERS_PATH` is unset.

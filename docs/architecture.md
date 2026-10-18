@@ -12,11 +12,14 @@ This document maps the implementation onto the blueprint. Section numbers (§) r
 | `postgres` | `db/migrations/` | Only scheduler of record | control | 1.5 GiB / 0.3 |
 | `egress-gateway` | `src/gateway/` | Connection-time destination policy for HTTP, HTTPS (CONNECT) and WebSocket | egress, acquisition, triage | 0.5 GiB / 0.1 |
 | `scrapling-worker` (profile `scrapling`) | `scrapling-worker/` | Optional alternate adapter, at most one global permit | control, acquisition | shares the envelope |
+| `api` (profile `console`) | `src/web/`, `web/` | Analyst API and strict-CSP console: sessions + TOTP, case-scoped authorisation, intake, investigation, evidence verification, notices, Section 63 worksheets, monitoring, analytics, metrics. Never contacts target sites | control, console (loopback publish only) | 0.5 GiB / 0.1 |
 
-The five baseline caps add up to 9.75 GiB and 2.0 vCPU, matching the blueprint's proposal. They
-are caps for evaluation. They are not measured requirements.
+The six caps add up to 9.75 GiB and 2.0 vCPU, matching the blueprint's proposal: the console's
+share was taken from `browser-engine`, not added on top (v4 §4). They are caps for evaluation.
+They are not measured requirements.
 
-Only `egress-gateway` is attached to a non-internal network. The `acquisition`, `triage` and
+Only `egress-gateway` is attached to a network with an Internet route. The `console` bridge has
+IP masquerade disabled and exists only to publish the console on host loopback. The `acquisition`, `triage` and
 `control` networks are `internal: true`, so the browser engine has no route except through the
 gateway. This is enforced by the network topology, not only by page routing.
 
@@ -156,6 +159,39 @@ List grouping apply.
 
 Derived outputs (identifiers, QR, OCR text) go to `derived/<uuid>/` with their own manifest, which
 points at the hashes of the source files. Attempt directories are never modified after the rename.
+
+## Evidence integrity and custody (v4 §20, §21)
+
+| Step | Module | Guarantee |
+|---|---|---|
+| Write | `src/storage/artifactStore.ts` | SHA-256 over saved bytes; files `0440`; attempt directory renamed atomically, then every file re-hashed (`verifiedAtCommit`) |
+| Describe | `src/evidence/manifestContext.ts` | Manifest v2: exact original inputs, navigation URL, UTC and IST, clock fact, engine, profile, capture context, declared vantage, redirect chain, software versions, integrity note |
+| Seal | ledger `attempts.manifest_sha256`, `src/evidence/package.ts` | The manifest never contains its own hash; packages hash their index, and the index hash lives in the database and hand-off record |
+| Custody | `src/evidence/custody.ts`, `audit_events` | Hash-chained, append-only audit log sealed every 2 s; Ed25519-signed checkpoints for external storage |
+| Verify | `src/evidence/verify.ts` | Re-hashes every file of an attempt, job or case; hashed JSON report; `artifacts.verification_state` updated |
+| Derive | `src/extraction/thumbnail.ts`, `annotations` | Derivatives carry `derived_from` and their own hash; notes and decisions never change originals |
+
+## Analyst API (v4 §22, §23)
+
+`src/web/server.ts` is a small `node:http` router: explicit routes (literal paths sorted before
+parameterised ones), per-route auth level (`none`, `password`, `full`) and roles, CSRF on every
+mutation, body limits, request IDs and security headers. `src/web/authz.ts` resolves case
+membership (`job_case_links` view) for every object; anything outside the caller's cases returns
+404. Route modules live in `src/web/routes/` (auth, cases, jobs, evidence, investigate, actions,
+monitoring, ops). `docs/openapi.json` is generated from the live route table (`npm run openapi`)
+and checked in CI.
+
+Investigation data is append-only: `analyst_decisions`, `identifier_reviews`, `annotations` and
+`risk_assessments` reject updates and deletes (`forbid_mutation()`). The latest decision per
+target forms the verdict (`target_verdicts` view). A false-positive or benign verdict suppresses
+external actions until an approver overrides it on newer evidence.
+
+Notices follow `draft → analyst_review → legal_check → approved → generated → issued →
+acknowledged → complied | partially_complied | rejected | no_response → verified_closed |
+escalated` (plus `withdrawn` and `disputed`). Eligibility checks per legal route
+(`src/actions/legalRoutes.ts`) block submission and approval. Approval stores a snapshot hash that
+generation re-checks. Issuance and receipt need uploaded proof. Verified closure needs a capture
+taken after issuance.
 
 ## Security boundaries (§13)
 
