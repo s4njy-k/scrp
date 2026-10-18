@@ -35,7 +35,7 @@ closed or explicitly accepted by the owner. Each closure needs a date, the opera
 | B7 | AI interpretation | §13 | Not implemented; policy forbids enabling it | — |
 | B8 | WAL archiving (RPO < 24 h) | §15 | `archive_mode=off`; daily dumps | Enable together with an independent archive destination |
 | B9 | OCR languages other than English | §11 | `tesseract-ocr-eng` only | Add e.g. `tesseract-ocr-hin` to the app image and set `TESSERACT_LANG=eng+hin` if needed |
-| B10 | Dedicated two-target cookie-isolation fixture test | §18 C | Isolation holds by design (fresh context per attempt; state reused only within the same job and engine) | Add as a regression test |
+| B10 | ~~Dedicated two-target cookie-isolation fixture test~~ | §18 C | **Closed 2026-10-17**: `browserCapture.test.ts › isolates cookies between targets…` | — |
 | B11 | Mobile capture on Firefox | §9 | Mobile emulation is Chromium-only; Firefox falls back to desktop with a recorded limitation | — |
 | B12 | Project licence | — | `UNLICENSED`, all rights reserved | The owner chooses |
 
@@ -48,3 +48,5 @@ _Paste `scripts/preflight.sh` output here (date, operator)._
 | Date | Operator | Change | Evidence |
 |---|---|---|---|
 | 2026-10-17 | Claude Code (repository setup) | Initial implementation of the blueprint; fixture tests passing in development | `docs/acceptance.md` |
+| 2026-10-17 | Claude Code (review pass) | Corrections from a full self-review: shared-browser lifetime (leases, no close under a running capture, no duplicate launches); idle backoff instead of a tight lease-polling loop; consistent jobs→attempts lock order (no commit/reclaim deadlock); every Playwright await bounded plus a hard attempt deadline; pre-response timeouts and browser error pages no longer count as evidence; status judged on the document finally shown; case holds honoured across merged seeds; legitimately empty text accepted; sealed attempt directories; reconciler quiet period and stray handling; gateway survives client resets during DNS/connect and counts pending tunnels; DNS answer cache; child pages normalised like imports and only from reached content; watchdogs ignore database outages; Compose policy mount fails loudly, grace periods, Crawlee storage on tmpfs; CI action and healthcheck updates. 10 new regression tests (132 total) | `docs/acceptance.md` |
+| 2026-10-18 | Claude Code (PR review) | Codex review findings on #2: the attempt runner waits for an abandoned capture's cleanup (HAR flush) before finalising after the hard deadline; the captured page's status is no longer replaced by a popup's response. Both reproduced on the old code; 2 regression tests (134 total) | `docs/acceptance.md` |

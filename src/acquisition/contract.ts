@@ -118,6 +118,8 @@ export function evaluateRequired(required: readonly string[], entries: readonly 
     const acceptable = SATISFIED_BY[req] ?? [req];
     const ok = entries.some((e) => {
       if (!acceptable.includes(e.type) || !e.path || !e.sha256) return false;
+      // Browser error pages and gateway refusal pages are preserved, but are not target evidence.
+      if (e.metadata?.not_target_content === true) return false;
       if (e.completeness === 'complete') return true;
       return (e.completeness === 'truncated' || e.completeness === 'partial') && SATISFIABLE_WHEN_PARTIAL.has(req);
     });

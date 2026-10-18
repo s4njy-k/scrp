@@ -19,12 +19,14 @@ export class HttpTriageWorker {
   readonly workerId = `http-triage:${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
   private autoscaled: AutoscaledPool | null = null;
   private stopping = false;
+  /** Back off when due work cannot be leased (per-domain lock/pacing) instead of spinning. */
+  private idleUntil = 0;
   lastProgressAt = Date.now();
 
   constructor(private readonly o: { pool: Pool; policy: Policy; egress: EgressConfig; artifactRoot: string }) {}
 
   private async hasDueWork(): Promise<boolean> {
-    if (this.stopping) return false;
+    if (this.stopping || Date.now() < this.idleUntil) return false;
     try {
       const adm = await readAdmission(this.o.pool);
       if (adm.paused) return false;
@@ -36,6 +38,8 @@ export class HttpTriageWorker {
       this.lastProgressAt = Date.now();
       return rows[0]?.due ?? false;
     } catch {
+      this.lastProgressAt = Date.now();
+      this.idleUntil = Date.now() + 5000;
       return false;
     }
   }
@@ -45,7 +49,10 @@ export class HttpTriageWorker {
     const lease = await leaseNext(pool, policy, {
       workerId: this.workerId, stages: ['http'], needsBrowserPermit: false, engine: 'undici', adapter: 'http-triage', vantage: egress.vantage,
     });
-    if (!lease) return;
+    if (!lease) {
+      this.idleUntil = Date.now() + 1000;
+      return;
+    }
     const relaxedTls = lease.job.scope.relaxed_tls === true;
     const dispatcher = createDispatcher(egress, { relaxedTls, connectTimeoutMs: Math.min(10_000, policy.limits.http_attempt_seconds * 1000) });
     try {

@@ -24,7 +24,7 @@ export async function runBrowserWorker(pool: Pool, policy: Policy, root: string)
     role: 'browser-worker', workerId: worker.workerId, lastProgressAt: () => worker.lastProgressAt,
     details: () => ({ active_leases: worker.activeLeases.size }),
   };
-  startHealthServer(Number(process.env.HEALTH_PORT ?? 8081), [source], pool, 5 * 60_000);
+  const health = startHealthServer(Number(process.env.HEALTH_PORT ?? 8081), [source], pool, 5 * 60_000);
   // A visit is bounded by the policy; far beyond lease duration means the process is stuck.
   startWatchdog([source], Math.max(10 * 60_000, policy.queue.lease_seconds * 5 * 1000));
   const hb = setInterval(() => { recordHeartbeat(pool, source, startedAt).catch(() => undefined); }, 10_000);
@@ -42,5 +42,6 @@ export async function runBrowserWorker(pool: Pool, policy: Policy, root: string)
   await worker.run();
   await browsers.closeAll();
   clearInterval(hb);
+  health.close();
   await pool.end();
 }

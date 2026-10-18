@@ -3,7 +3,7 @@
  * extraction (DOM, QR) → export, plus crash reconciliation.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Pool } from '../../src/db/pool.js';
@@ -142,6 +142,13 @@ describe.skipIf(!hasDb || !BROWSERS_AVAILABLE)('end-to-end collection pipeline',
     await mkdir(join(root, 'tmp', l2.attemptId, 'screenshots'), { recursive: true });
     await writeFile(join(root, 'tmp', l2.attemptId, 'screenshots', '01-early-viewport.png'), Buffer.from('partial'));
     await pool.query(`UPDATE jobs SET lease_expires_at = now() - interval '1 second' WHERE id = $1`, [l2.job.id]);
+
+    // Inside the quiet period the directory is left alone (the worker may still be writing).
+    expect((await reconcile(pool, policy, root)).tmpSalvaged).toBe(0);
+    const old = new Date(Date.now() - (policy.queue.lease_seconds + 10) * 1000);
+    await utimes(join(root, 'tmp', l2.attemptId, 'screenshots', '01-early-viewport.png'), old, old);
+    await utimes(join(root, 'tmp', l2.attemptId, 'screenshots'), old, old);
+    await utimes(join(root, 'tmp', l2.attemptId), old, old);
 
     const report = await reconcile(pool, policy, root);
     expect(report.tmpSalvaged).toBe(1);

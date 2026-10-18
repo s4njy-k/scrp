@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Browser } from 'playwright-core';
+import type { Browser, BrowserContextOptions } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { captureWithBrowser, type BrowserCaptureResult } from '../../src/capture/browserCapture.js';
 import { AttemptWriter } from '../../src/storage/artifactStore.js';
@@ -22,10 +22,10 @@ const pools: BrowserPool[] = [];
 async function browserVia(proxyUrl: string | null): Promise<Browser> {
   const pool = new BrowserPool({ mode: 'local', wsEndpoint: null, connectTimeoutMs: 30_000, chromiumSandbox: TEST_CHROMIUM_SANDBOX }, policy, { proxyUrl, vantage: 'test' });
   pools.push(pool);
-  return pool.acquire('chromium');
+  return (await pool.acquire('chromium')).browser;
 }
 
-async function capture(browser: Browser, url: string, seconds = 40, interactions = ['scroll'], proxyUrl: string | null = null): Promise<{ r: BrowserCaptureResult; manifest: AttemptManifest; dir: string }> {
+async function capture(browser: Browser, url: string, seconds = 40, interactions = ['scroll'], proxyUrl: string | null = null, storageState?: BrowserContextOptions['storageState']): Promise<{ r: BrowserCaptureResult; manifest: AttemptManifest; dir: string }> {
   const id = randomUUID();
   const writer = new AttemptWriter(root, id, 50 * 1024 * 1024);
   await writer.init();
@@ -34,6 +34,7 @@ async function capture(browser: Browser, url: string, seconds = 40, interactions
     browser, engine: 'chromium', url, policy, writer, deadline: Date.now() + seconds * 1000, allowedInteractions: interactions,
     captureVariant: 'desktop', relaxedTls: false, egress: { proxyUrl, vantage: 'test' }, signal: new AbortController().signal,
     isolation: { mode: 'local', chromiumSandbox: TEST_CHROMIUM_SANDBOX },
+    ...(storageState ? { storageState } : {}),
   });
   const fin = await writer.finalise((entries) => {
     const c = evaluateRequired(PROFILE_DEFAULT_REQUIRED.browser_evidence, entries);
@@ -122,6 +123,70 @@ describe.skipIf(!BROWSERS_AVAILABLE)('staged browser evidence capture (§9, §10
     expect(crop?.metadata).toMatchObject({ frame_url: fixture.url('/qr') });
     expect(crop?.metadata?.locator).toMatch(/^html > /);
     expect(crop?.metadata?.bbox).toBeTruthy();
+  });
+
+  it('treats a navigation timeout with no document response as a timeout, not salvaged evidence', async () => {
+    const { r, manifest } = await capture(direct, fixture.url('/hang'), 25);
+    expect(r.observation.netError?.kind).toBe('timeout');
+    expect(r.observation.validScreenshots).toBe(0);
+    expect(manifest.classification).toBe('timeout');
+    // The browser's blank/error page is preserved but never counts as target evidence.
+    expect(manifest.requiredSatisfied).toBe(false);
+    expect(manifest.missingRequired).toContain('screenshot_viewport');
+  });
+
+  it('judges a challenge that clears by itself by the document finally shown', async () => {
+    const { r, manifest } = await capture(direct, fixture.url('/challenge-js'), 45);
+    expect(r.observation.challengeResolvedDuringWait).toBe(true);
+    expect(r.observation.status).toBe(200);
+    expect(manifest.outcome).toBe('CONTENT_CAPTURED');
+  });
+
+  it('never lets a popup response stand in for the captured page status', async () => {
+    const { r, manifest, dir } = await capture(direct, fixture.url('/opens-denied-popup'));
+    const events = (await readFile(join(dir, 'network/events.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { type: string; url?: string; status?: number });
+    expect(events.some((e) => e.type === 'response' && e.url?.endsWith('/denied') && e.status === 403)).toBe(true); // popup observed
+    expect(r.observation.status).toBe(200);
+    expect(manifest.outcome).toBe('CONTENT_CAPTURED');
+    expect(manifest.artifacts.filter((a) => a.type === 'raw_html').every((a) => !String(a.metadata?.url).endsWith('/denied'))).toBe(true);
+  });
+
+  it('accepts a legitimately text-free page as complete evidence', async () => {
+    const { manifest } = await capture(direct, fixture.url('/image-only'));
+    const text = manifest.artifacts.find((a) => a.type === 'rendered_text');
+    expect(text).toMatchObject({ completeness: 'complete', sizeBytes: 0 });
+    expect(manifest.requiredSatisfied).toBe(true);
+  });
+
+  it('isolates cookies between targets and keeps them within one target session', async () => {
+    const first = await capture(direct, fixture.url('/set-cookie'));
+    const other = await capture(direct, fixture.url('/echo-cookie'));
+    expect(await readFile(join(other.dir, 'dom/rendered.txt'), 'utf8')).toContain('cookie=[none]');
+    const state = JSON.parse(await readFile(join(first.dir, 'session/storage-state.json'), 'utf8')) as BrowserContextOptions['storageState'];
+    const same = await capture(direct, fixture.url('/echo-cookie'), 40, ['scroll'], null, state);
+    expect(await readFile(join(same.dir, 'dom/rendered.txt'), 'utf8')).toContain('session=target-a-secret');
+    // Cookies are restricted evidence: redacted from the ordinary event log.
+    expect(await readFile(join(same.dir, 'network/events.jsonl'), 'utf8')).not.toContain('target-a-secret');
+  });
+
+  it('never closes a shared browser under a running capture when it is retired', async () => {
+    const pool = new BrowserPool({ mode: 'local', wsEndpoint: null, connectTimeoutMs: 30_000, chromiumSandbox: TEST_CHROMIUM_SANDBOX },
+      testPolicy({ browser: { recycle_after_jobs: 1 } }), { proxyUrl: null, vantage: 'test' });
+    pools.push(pool);
+    const [a, b] = await Promise.all([pool.acquire('chromium'), pool.acquire('chromium')]);
+    expect(a.browser).toBe(b.browser); // concurrent first acquires share one launch
+    const c = await pool.acquire('chromium'); // job limit reached: old browser retired, new one opened
+    expect(c.browser).not.toBe(a.browser);
+    expect(a.browser.isConnected()).toBe(true); // still in use by a and b
+    pool.discard('chromium');
+    expect(c.browser.isConnected()).toBe(true); // retired but leased
+    a.release();
+    expect(b.browser.isConnected()).toBe(true);
+    b.release();
+    c.release();
+    await new Promise((res) => setTimeout(res, 500));
+    expect(a.browser.isConnected()).toBe(false);
+    expect(c.browser.isConnected()).toBe(false);
   });
 
   it('routes browser loopback traffic through the gateway, which refuses it', async () => {

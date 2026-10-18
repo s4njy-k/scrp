@@ -19,7 +19,7 @@ import type { Policy } from '../config/policy.js';
 import { MiB } from '../config/policy.js';
 import type { AttemptWriter } from '../storage/artifactStore.js';
 import type { BrowserObservation } from '../router/router.js';
-import { classifyNetError, detectAuthWall, detectChallenge } from '../router/signals.js';
+import { classifyNetError, detectAuthWall, detectChallenge, parseRetryAfter } from '../router/signals.js';
 import type { DomainEdgeInput } from '../queue/queue.js';
 import { lookupViaGateway, type EgressConfig } from '../acquisition/egress.js';
 import { NetworkRecorder } from './networkRecorder.js';
@@ -165,15 +165,16 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
       let method = `Playwright page.screenshot(${opts.fullPage ? 'fullPage' : opts.clip ? 'clip' : 'viewport'})`;
       const extraLimitations: string[] = [];
       try {
-        buf = await page.screenshot({ type: 'png', fullPage: opts.fullPage ?? false, ...(opts.clip ? { clip: opts.clip } : {}), timeout, animations: 'allow', caret: 'initial' });
+        // Playwright's own timeout is not always honoured on a page stuck mid-navigation: race it too.
+        buf = await bounded(page.screenshot({ type: 'png', fullPage: opts.fullPage ?? false, ...(opts.clip ? { clip: opts.clip } : {}), timeout, animations: 'allow', caret: 'initial' }), timeout + 1000, 'page.screenshot');
       } catch (err) {
         if (args.engine !== 'chromium' || opts.fullPage || !/Timeout|fonts/i.test((err as Error).message)) throw err;
-        const cdp = await page.context().newCDPSession(page);
+        const cdp = await bounded(page.context().newCDPSession(page), 3000, 'CDP session');
         try {
-          const r = await bounded(cdp.send('Page.captureScreenshot', { format: 'png', ...(opts.clip ? { clip: { ...opts.clip, scale: 1 } } : {}) }), 8000, 'CDP captureScreenshot');
+          const r = await bounded(cdp.send('Page.captureScreenshot', { format: 'png', ...(opts.clip ? { clip: { ...opts.clip, scale: 1 } } : {}) }), 6000, 'CDP captureScreenshot');
           buf = Buffer.from(r.data, 'base64');
         } finally {
-          await cdp.detach().catch(() => undefined);
+          await bounded(cdp.detach(), 2000, 'CDP detach').catch(() => undefined);
         }
         method = 'CDP Page.captureScreenshot (Chromium-only fallback)';
         extraLimitations.push(`page.screenshot did not complete (${(err as Error).message.split('\n')[0]?.slice(0, 120)}); raw compositor capture used, fonts may be incomplete`);
@@ -214,13 +215,22 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
     }
   };
 
+  // Lease lost: stop target activity at once by closing the pages (the context is
+  // still closed in finally, which flushes the HAR of what was observed so far).
+  const onAbort = () => {
+    log('lease_lost_stopping_target_activity');
+    for (const p of context?.pages() ?? []) p.close().catch(() => undefined);
+  };
+  args.signal.addEventListener('abort', onAbort, { once: true });
+
   try {
-    context = await browser.newContext(contextOptions);
+    context = await bounded(browser.newContext(contextOptions), 15_000, 'newContext');
+    if (args.signal.aborted) throw new Error('lease lost before navigation');
     recorder = new NetworkRecorder(writer, policy, (p) => { p.close().catch(() => undefined); });
     recorder.attach(context);
-    page = await context.newPage();
+    page = await bounded(context.newPage(), 15_000, 'newPage');
     recorder.attachPage(page, false);
-    userAgent = await page.evaluate(() => navigator.userAgent).catch(() => null);
+    userAgent = await bounded(page.evaluate(() => navigator.userAgent), 5000, 'userAgent').catch(() => null);
     log('context_created', { user_agent: userAgent });
 
     // ---- 2. Bounded navigation (exact supplied URL, fragment preserved) ----
@@ -228,18 +238,25 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
     const navTimeout = Math.max(1000, Math.min(policy.browser.navigation_timeout_seconds * 1000, remaining()));
     const navStart = Date.now();
     try {
-      mainResponse = await page.goto(args.url, { waitUntil: 'commit', timeout: navTimeout });
+      mainResponse = await bounded(page.goto(args.url, { waitUntil: 'commit', timeout: navTimeout }), navTimeout + 2000, 'goto (TIMEOUT)');
       log('navigation_committed', { status: mainResponse?.status() ?? null, url: page.url() });
     } catch (err) {
       const message = (err as Error).message.slice(0, 1000);
       const kind = classifyNetError(message);
       log('navigation_error', { message, kind });
-      if (kind === 'timeout') navigationTimedOut = true;
-      else netError = { kind, message };
+      if (kind === 'timeout') {
+        navigationTimedOut = true;
+        // No document response at all: nothing renderable exists (the page is still
+        // about:blank). That is a network timeout, not a salvageable slow page.
+        if (recorder.mainDocumentResponses.length === 0) netError = { kind, message };
+      } else {
+        netError = { kind, message };
+      }
     }
     if (!netError) {
       try {
-        await page.waitForLoadState('domcontentloaded', { timeout: Math.max(500, navTimeout - (Date.now() - navStart)) });
+        const dclMs = Math.max(500, navTimeout - (Date.now() - navStart));
+        await bounded(page.waitForLoadState('domcontentloaded', { timeout: dclMs }), dclMs + 1000, 'domcontentloaded');
         log('domcontentloaded');
       } catch {
         navigationTimedOut = true;
@@ -250,7 +267,7 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
     // Main-document status/headers: goto response, else the recorder's last main navigation.
     const mainDocs = recorder.mainDocumentResponses;
     const mainStatus = mainResponse?.status() ?? mainDocs.at(-1)?.status ?? null;
-    const mainHeaders = mainResponse ? await mainResponse.allHeaders().catch(() => mainResponse!.headers()) : mainDocs.at(-1)?.headers ?? {};
+    const mainHeaders = mainResponse ? await bounded(mainResponse.allHeaders(), 3000, 'allHeaders').catch(() => mainResponse!.headers()) : mainDocs.at(-1)?.headers ?? {};
 
     // Gateway refusals of absolute-form http:// arrive as a response with X-Egress-Error.
     // Only trusted when this attempt is actually proxied (a site could send the header itself).
@@ -271,6 +288,8 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
       }
     }
     if (egressRefused) mainResponse = null; // the gateway's refusal page is not target content
+    let currentStatus = egressRefused ? null : mainStatus;
+    let currentHeaders: Record<string, string> = egressRefused ? {} : mainHeaders;
 
     // ---- 3. Early viewport (also preserves a challenge or error state) ----
     if (!netError || mainResponse) {
@@ -285,7 +304,10 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
     } else {
       // Navigation failed outright: still attempt a best-effort screenshot of the error state
       // unless the renderer is dead (it shows the browser error page, labelled as such).
-      await shot('screenshots/01-error-state.png', 'screenshot_early', {}, { stage: 'navigation_error', note: 'browser error page; not target content' });
+      await shot('screenshots/01-error-state.png', 'screenshot_early', {}, {
+        stage: 'navigation_error', not_target_content: true,
+        note: egressRefused ? 'egress gateway refusal page; not target content' : 'browser error page; not target content',
+      });
       validScreenshots = 0; // an error page is not a renderable target state
     }
 
@@ -314,7 +336,7 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
         const t0 = Date.now();
         let loadFired = false;
         try {
-          await page.waitForLoadState('load', { timeout: Math.max(1, readinessMs) });
+          await bounded(page.waitForLoadState('load', { timeout: Math.max(1, readinessMs) }), Math.max(1, readinessMs) + 1000, 'load');
           loadFired = true;
         } catch { /* bounded */ }
         const left = Math.max(0, readinessMs - (Date.now() - t0));
@@ -348,11 +370,18 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
         await shot('screenshots/02-settled-viewport.png', 'screenshot_settled', {}, { stage: 'settled' });
         log('settled_screenshot');
       }
-      await saveDomAndText(page, writer, policy, remaining, log, limitations);
+      if (!args.signal.aborted) await saveDomAndText(page, writer, policy, remaining, log, limitations);
+      // The document now shown may differ from the first one (challenge auto-completion,
+      // JS/meta redirects): judge status and headers by the latest main-frame document.
+      const latest = recorder.mainDocumentResponses.at(-1);
+      if (latest && !egressRefused) {
+        currentStatus = latest.status;
+        currentHeaders = latest.headers;
+      }
       const st = await pageState();
       if (st) {
         contentAppeared ||= st.text.trim().length > 0;
-        authSignals = detectAuthWall({ status: mainStatus, hasPasswordField: st.hasPassword, headers: mainHeaders });
+        authSignals = detectAuthWall({ status: currentStatus, hasPasswordField: st.hasPassword, headers: currentHeaders });
         renderIncompat = RENDER_INCOMPAT.test(st.text) ? ['page_text:browser_unsupported'] : [];
         if (challengeResolved) {
           challenge = detectChallenge({ html: st.html, title: st.title, visibleTextLength: st.text.length, frameUrls: st.frameUrls });
@@ -369,7 +398,7 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
     finalUrl = page.url();
     const result: BrowserObservation = {
       netError: contentAppeared ? null : netError,
-      status: mainStatus,
+      status: currentStatus,
       challenge,
       challengeResolvedDuringWait: challengeResolved && !challenge.challenge,
       authSignals,
@@ -381,7 +410,7 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
       requiredSatisfied: false, // computed from the hashed manifest by the worker
       missingRequired: [],
       visibleTextLength,
-      retryAfterSeconds: mainHeaders['retry-after'] ? Number(mainHeaders['retry-after']) || null : null,
+      retryAfterSeconds: parseRetryAfter(currentHeaders['retry-after'] ?? null),
     };
     if (args.signal.aborted) limitations.push('lease lost during capture: target activity stopped early');
     return { observation: result, finalUrl, edges: recorder.edges, userAgent, engineVersion, settings, limitations };
@@ -401,9 +430,10 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
       userAgent,
       engineVersion,
       settings,
-      limitations: [...limitations, `capture aborted by error: ${message.slice(0, 300)}`],
+      limitations: (limitations.push(`capture aborted by error: ${message.slice(0, 300)}`), limitations),
     };
   } finally {
+    args.signal.removeEventListener('abort', onAbort);
     // ---- 9. Finalisation inside the reserved window ----
     const finalStart = Date.now();
     const finalBudget = () => Math.max(500, args.deadline - Date.now());
@@ -425,6 +455,8 @@ export async function captureWithBrowser(args: BrowserCaptureArgs): Promise<Brow
         harOk = true;
       } catch (err) {
         limitations.push(`context close/HAR flush failed: ${(err as Error).message.slice(0, 200)}`);
+        // Do not leave a stuck context open in the shared browser.
+        context.close().catch(() => undefined);
       }
     }
     if (harOk) {
@@ -497,6 +529,7 @@ async function saveDomAndText(page: Page, writer: AttemptWriter, policy: Policy,
     await writer.writeArtifact('dom/rendered.txt', text, {
       type: 'rendered_text', observedStart: tStart, observedEnd: new Date().toISOString(), creationMethod: 'document.body.innerText (main frame)',
       completeness: 'complete', limitations: text.length === 0 ? ['empty visible text: may be a legitimate sparse/image-only page'] : [],
+      metadata: { empty_is_legitimate: true },
     });
   } catch (err) {
     writer.recordMissing({ type: 'rendered_text', observedStart: tStart, observedEnd: null, creationMethod: 'innerText', completeness: 'failed', limitations: [], error: (err as Error).message.slice(0, 300) });
@@ -549,7 +582,7 @@ async function captureFullOrTiles(page: Page, args: BrowserCaptureArgs, shot: Sh
     let growth = 0;
     for (let i = 1; i <= policy.bounds.max_scroll_steps && remaining() > 8000; i += 1) {
       const y = i * d.vh;
-      await page.evaluate((yy) => window.scrollTo(0, yy), y).catch(() => undefined);
+      await bounded(page.evaluate((yy) => window.scrollTo(0, yy), y), 3000, 'scroll').catch(() => undefined);
       await sleep(policy.browser.scroll_step_wait_ms);
       const nd = await dims().catch(() => d);
       if (nd.h > lastH) growth += 1;
@@ -558,7 +591,7 @@ async function captureFullOrTiles(page: Page, args: BrowserCaptureArgs, shot: Sh
       if (y + d.vh >= nd.h) break;
       if (i === policy.bounds.max_scroll_steps && nd.h > y + d.vh) infinite = growth >= 2;
     }
-    await page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined);
+    await bounded(page.evaluate(() => window.scrollTo(0, 0)), 3000, 'scroll').catch(() => undefined);
     await sleep(policy.browser.scroll_step_wait_ms);
     d = await dims().catch(() => d);
     log('scroll_reset', { page_height: d.h, infinite_or_virtualised_suspected: infinite });
@@ -582,14 +615,14 @@ async function captureFullOrTiles(page: Page, args: BrowserCaptureArgs, shot: Sh
   for (let i = 0; i < maxTiles && remaining() > 4000; i += 1) {
     const y = i * d.vh;
     if (y >= d.h) break;
-    await page.evaluate((yy) => window.scrollTo(0, yy), y).catch(() => undefined);
+    await bounded(page.evaluate((yy) => window.scrollTo(0, yy), y), 3000, 'scroll').catch(() => undefined);
     await sleep(policy.browser.scroll_step_wait_ms);
     const rel = `screenshots/tiles/${String(i + 1).padStart(2, '0')}.png`;
     const at = new Date().toISOString();
     const ok = await shot(rel, 'screenshot_tile', {}, { tile_index: i + 1, scroll_y: y, viewport_height: d.vh });
     tiles.push({ index: i + 1, y, path: ok ? rel : null, at });
   }
-  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined);
+  await bounded(page.evaluate(() => window.scrollTo(0, 0)), 3000, 'scroll').catch(() => undefined);
   const covered = tiles.length * d.vh;
   const truncated = covered < d.h || infinite;
   const reason = infinite ? 'infinite/virtualised content: bounded sample, NOT the entire page'
@@ -624,8 +657,9 @@ async function captureElements(page: Page, args: BrowserCaptureArgs, remaining: 
       const meta = { kind: c.kind, locator: c.selector, frame_url: frame.url(), bbox_at_discovery: c.bbox, context: c.context, note: c.note ?? null };
       try {
         const loc = frame.locator(c.selector).first();
-        const buf = await loc.screenshot({ type: 'png', timeout: Math.min(4000, remaining()), animations: 'allow' });
-        const box = await loc.boundingBox().catch(() => null);
+        const shotMs = Math.max(500, Math.min(4000, remaining()));
+        const buf = await bounded(loc.screenshot({ type: 'png', timeout: shotMs, animations: 'allow' }), shotMs + 1000, 'locator.screenshot');
+        const box = await bounded(loc.boundingBox(), 2000, 'boundingBox').catch(() => null);
         const check = checkPng(buf, policy.bounds.max_image_decode_megapixels);
         if (!check.valid) throw new Error(`invalid element image: ${check.error}`);
         await writer.writeArtifact(rel, buf, {

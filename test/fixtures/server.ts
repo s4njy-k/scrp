@@ -77,6 +77,36 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse, url: UR
     res.write(`<!doctype html><html><head><title>Slow</title></head><body><h1>Partial content visible</h1><p>Contact slow@acme-refund.example</p>${' '.repeat(2048)}`);
     // Never call res.end(): navigation/readiness time out while content is renderable.
   },
+  // Accepts the request and never responds: a navigation timeout with nothing renderable.
+  '/hang': () => { /* intentionally never answers */ },
+  // JS challenge that clears by itself (ordinary browser completion) and lands on real content.
+  '/challenge-js': (_q, res) => {
+    res.writeHead(403, { 'content-type': 'text/html', server: 'cloudflare' });
+    res.end(html('<div id="challenge-form">Checking your browser…</div><script>setTimeout(function(){ location.replace("/static"); }, 800);</script>', 'Just a moment...'));
+  },
+  // Legitimately text-free page: an image only.
+  '/image-only': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html('<img src="/qr.png" alt="" width="246" height="246">', ''));
+  },
+  '/set-cookie': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': 'session=target-a-secret; Path=/; HttpOnly' });
+    res.end(html('<p>cookie set</p>', 'Set'));
+  },
+  '/echo-cookie': (q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html(`<p id="cookie">cookie=[${(q.headers.cookie ?? 'none').replace(/[<>&]/g, '')}]</p>`, 'Echo'));
+  },
+  // Real content that opens a popup answering 403 (an ad/login window).
+  '/opens-denied-popup': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html(`<h1>Main content</h1><p>${'Visible target text. '.repeat(30)}</p><script>setTimeout(function(){ window.open('/popup-redirects-to-denied', '_blank'); }, 100);</script>`, 'Main'));
+  },
+  // Popup that loads, then navigates to a 403 (as ad/login popups do).
+  '/popup-redirects-to-denied': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html('<p>popup</p><script>setTimeout(function(){ location.replace("/denied"); }, 100);</script>', 'Popup'));
+  },
   '/login': (_q, res) => {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(html('<h1>Sign in</h1><form action="/do-login"><input name="u"><input type="password" name="p"><button>Login</button></form>', 'Login'));

@@ -14,6 +14,16 @@ import { decideInfrastructure, type Classified, type RouterJob } from '../router
 import { AttemptWriter } from '../storage/artifactStore.js';
 import { evaluateRequired, processingStateFor, type ManifestEntry } from './contract.js';
 
+/** How far past its deadline an attempt may run before it is abandoned as an infrastructure failure. */
+export const HARD_DEADLINE_GRACE_MS = 20_000;
+/**
+ * After the hard deadline, how long to wait for the abandoned capture's own
+ * (bounded) cleanup before finalising. Its finally block closes the context,
+ * which makes Playwright flush the HAR straight into the attempt directory;
+ * finalising underneath that would hash a moving target or recreate tmp/<id>.
+ */
+export const CAPTURE_CLEANUP_WAIT_MS = 30_000;
+
 export interface CaptureContext {
   writer: AttemptWriter;
   deadline: number;
@@ -43,6 +53,8 @@ export interface RunAttemptArgs {
   adapter: string;
   vantage: string;
   capture: (ctx: CaptureContext) => Promise<CaptureOutcome>;
+  /** Test hook; defaults to HARD_DEADLINE_GRACE_MS. */
+  hardDeadlineGraceMs?: number;
 }
 
 export function routerJobFromLease(lease: Lease): RouterJob {
@@ -88,11 +100,34 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
   const job = routerJobFromLease(lease);
   const requestedUrl = lease.target.url;
   let finalised = false;
+  // The capture promise outlives a hard-deadline rejection; finalisation must wait for it.
+  let capturePromise: Promise<CaptureOutcome> | null = null;
+  let captureSettled = false;
 
   try {
     await writer.init();
-    await setLeasedState(pool, lease, 'CAPTURING');
-    const outcome = await args.capture({ writer, deadline, signal: controller.signal });
+    // Fencing before the first target contact: a lease already lost is never used.
+    if (!(await setLeasedState(pool, lease, 'CAPTURING'))) {
+      leaseLost = true;
+      controller.abort(new Error('lease_lost'));
+      throw new Error('lease lost before target contact');
+    }
+    // Backstop: even if a library call ignores its own timeout, the attempt cannot
+    // exceed its deadline by more than a short grace period. The abandoned capture
+    // is aborted and its bounded cleanup is awaited (below) before finalising.
+    const hardMs = deadline - Date.now() + (args.hardDeadlineGraceMs ?? HARD_DEADLINE_GRACE_MS);
+    let hardTimer: NodeJS.Timeout | undefined;
+    capturePromise = args.capture({ writer, deadline, signal: controller.signal });
+    void capturePromise.then(() => { captureSettled = true; }, () => { captureSettled = true; });
+    const outcome = await Promise.race([
+      capturePromise,
+      new Promise<never>((_, reject) => {
+        hardTimer = setTimeout(() => {
+          controller.abort(new Error('attempt_hard_deadline'));
+          reject(new Error(`attempt exceeded its hard deadline (${Math.round(hardMs / 1000)} s)`));
+        }, Math.max(args.hardDeadlineGraceMs === undefined ? 1000 : 1, hardMs));
+      }),
+    ]).finally(() => clearTimeout(hardTimer));
     await setLeasedState(pool, lease, 'FINALISING');
 
     let decided: ReturnType<CaptureOutcome['decide']> | null = null;
@@ -133,6 +168,20 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
     const activeSeconds = (Date.now() - started) / 1000;
     const decision = decideInfrastructure(job, activeSeconds, policy, message.slice(0, 200));
     let fin: Awaited<ReturnType<AttemptWriter['finalise']>> | null = null;
+    const extraLimitations: string[] = [];
+    if (capturePromise && !captureSettled) {
+      // Abandoned by the hard deadline (aborted, pages closed): let its bounded
+      // cleanup finish so the HAR flush and stream ends land before hashing.
+      let waitTimer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        capturePromise.catch(() => undefined),
+        new Promise<void>((resolve) => { waitTimer = setTimeout(resolve, CAPTURE_CLEANUP_WAIT_MS); }),
+      ]).finally(() => clearTimeout(waitTimer));
+      if (!captureSettled) {
+        extraLimitations.push(`capture cleanup still running ${CAPTURE_CLEANUP_WAIT_MS / 1000} s after the hard deadline; files written later are not part of this manifest`);
+        logger.error({ job: lease.job.id, attempt: lease.attemptId }, 'capture did not finish cleanup after hard deadline; finalising anyway');
+      }
+    }
     try {
       await writer.settle(2000);
       fin = await writer.finalise((entries) => ({
@@ -140,7 +189,7 @@ export async function runLeasedAttempt(args: RunAttemptArgs): Promise<{ decision
         adapter: args.adapter, vantage: args.vantage, requestedUrl, finalUrl: null, startedAt, endedAt: new Date().toISOString(),
         outcome: 'INFRASTRUCTURE_DEFERRED', classification: 'infrastructure_error', requiredArtifacts: lease.job.required_artifacts,
         requiredSatisfied: false, missingRequired: evaluateRequired(lease.job.required_artifacts, entries).missing,
-        limitations: [`infrastructure error: ${message.slice(0, 300)}`],
+        limitations: [`infrastructure error: ${message.slice(0, 300)}`, ...extraLimitations],
       }), 'incomplete');
     } catch (finErr) {
       logger.error({ err: (finErr as Error).message, attempt: lease.attemptId }, 'could not finalise interrupted attempt; reconciler will salvage tmp directory');

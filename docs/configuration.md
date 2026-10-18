@@ -75,6 +75,7 @@ docker --context rootless compose -p cyber-web-collector run --rm --no-deps coor
 | `HEALTH_PORT`, `HEALTH_BIND` | coordinator, worker | Liveness endpoint (default `127.0.0.1:8081`) |
 | `WORKER_MAX_CONCURRENCY`, `WORKER_MEMORY_MBYTES` | worker | Lower the per-replica cap and give Crawlee a memory basis |
 | `TESSERACT_BIN`, `TESSERACT_LANG` | coordinator | OCR binary and language |
+| `CRAWLEE_STORAGE_DIR` | coordinator, worker | Set to `/tmp/crawlee` (tmpfs). The root filesystem is read-only and Crawlee must never write into `/app` |
 
 ## Input format (§6)
 

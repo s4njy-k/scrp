@@ -34,5 +34,6 @@ RUN groupadd --gid 10001 collector \
  && useradd --uid 10001 --gid collector --no-create-home --shell /usr/sbin/nologin collector \
  && mkdir -p /data/artifacts && chown collector:collector /data/artifacts
 USER 10001:10001
-ENTRYPOINT ["/usr/bin/tini", "--", "node", "dist/cli.js"]
+# -s: act as subreaper, so tini also works cleanly under Compose `init: true` (no PID-1 warning).
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "node", "dist/cli.js"]
 CMD ["serve", "coordinator"]
