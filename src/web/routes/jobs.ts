@@ -67,7 +67,8 @@ function batchDefaults(p: URLSearchParams): Record<string, unknown> {
   const variant = p.get('capture_variant');
   if (variant === 'desktop' || variant === 'mobile' || variant === 'both') out.capture_variant = variant;
   const retention = p.get('retention_class');
-  if (retention && /^[a-z_]{2,40}$/.test(retention)) out.retention_class = retention;
+  // Targets submitted into a case are case evidence unless the analyst chose a class explicitly.
+  out.retention_class = retention && /^[a-z_]{2,40}$/.test(retention) ? retention : 'case_evidence';
   return out;
 }
 

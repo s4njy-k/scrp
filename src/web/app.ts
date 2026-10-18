@@ -1,6 +1,7 @@
 /** Assembles the analyst API: every route group registered in one place. */
 import { ApiApp, type AppDeps } from './server.js';
 import { authRoutes } from './routes/auth.js';
+import { actionRoutes } from './routes/actions.js';
 import { caseRoutes } from './routes/cases.js';
 import { evidenceRoutes } from './routes/evidence.js';
 import { investigateRoutes } from './routes/investigate.js';
@@ -19,6 +20,7 @@ export function buildApp(deps: AppDeps): ApiApp {
     ...jobRoutes(d),
     ...evidenceRoutes(d),
     ...investigateRoutes(d),
+    ...actionRoutes(d),
   );
   return app;
 }

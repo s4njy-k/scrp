@@ -59,7 +59,7 @@ export async function buildExportRows(pool: Pool, date: string): Promise<ExportR
   return rows;
 }
 
-function csvCell(v: unknown): string {
+export function csvCell(v: unknown): string {
   const s = v === null || v === undefined ? '' : Array.isArray(v) ? v.join(';') : typeof v === 'object' ? JSON.stringify(v) : String(v);
   // Neutralise spreadsheet formula injection from untrusted page-derived text.
   const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
