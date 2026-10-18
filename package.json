@@ -16,7 +16,8 @@
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
     "schema": "tsx scripts/emit-policy-schema.ts",
-    "cli": "tsx src/cli.ts"
+    "cli": "tsx src/cli.ts",
+    "openapi": "tsx scripts/emit-openapi.ts"
   },
   "dependencies": {
     "@crawlee/core": "3.18.2",

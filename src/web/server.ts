@@ -61,8 +61,11 @@ export class ApiApp {
   }
 
   /** Route table for documentation tests (OpenAPI coverage). */
-  routeTable(): { method: string; path: string; auth: string; roles: string[] }[] {
-    return this.routes.map((r) => ({ method: r.method, path: r.path, auth: r.auth, roles: r.roles ?? [] }));
+  routeTable(): { method: string; path: string; auth: string; roles: string[]; body: 'json' | 'raw' | 'none'; csrf: boolean; rateBucket: string }[] {
+    return this.routes.map((r) => ({
+      method: r.method, path: r.path, auth: r.auth, roles: r.roles ?? [],
+      body: r.body ?? (r.method === 'GET' ? 'none' : 'json'), csrf: r.csrf ?? r.method !== 'GET', rateBucket: r.rateBucket ?? 'api',
+    }));
   }
 
   baseHeaders(requestId: string): Record<string, string> {

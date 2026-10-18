@@ -1,0 +1,6326 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Cyber Web Collector analyst API",
+    "version": "0.1.0",
+    "description": "Loopback-only analyst API (reach it through an SSH tunnel). Session cookie plus X-CSRF-Token on every mutation; MFA and case-membership authorisation. Objects outside your cases return 404. Generated from the live route table by `npm run openapi`."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "SSH tunnel to the collector VM"
+    }
+  ],
+  "tags": [
+    {
+      "name": "auth"
+    },
+    {
+      "name": "admin"
+    },
+    {
+      "name": "cases"
+    },
+    {
+      "name": "jobs"
+    },
+    {
+      "name": "evidence"
+    },
+    {
+      "name": "investigation"
+    },
+    {
+      "name": "actions"
+    },
+    {
+      "name": "monitoring"
+    },
+    {
+      "name": "ops"
+    }
+  ],
+  "paths": {
+    "/api/v1/actions/{id}/approve": {
+      "post": {
+        "operationId": "postActionsIdApprove",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Checker approval (blueprint path); freezes an approval snapshot hash",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "approver"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "note": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "operationId": "getAdminUsers",
+        "tags": [
+          "admin"
+        ],
+        "summary": "List accounts",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postAdminUsers",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Create an account with a one-time password",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "roles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "admin",
+                        "intake",
+                        "analyst",
+                        "approver",
+                        "evidence",
+                        "auditor",
+                        "report"
+                      ]
+                    },
+                    "maxItems": 7
+                  }
+                },
+                "required": [
+                  "username",
+                  "display_name",
+                  "roles"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}": {
+      "patch": {
+        "operationId": "patchAdminUsersId",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Change display name, roles or disabled state (sessions revoked on privilege change)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "roles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "admin",
+                        "intake",
+                        "analyst",
+                        "approver",
+                        "evidence",
+                        "auditor",
+                        "report"
+                      ]
+                    }
+                  },
+                  "disabled": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/reset-credentials": {
+      "post": {
+        "operationId": "postAdminUsersIdResetCredentials",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Issue a new one-time password, optionally resetting MFA",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reset_mfa": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/analytics": {
+      "get": {
+        "operationId": "getAnalytics",
+        "tags": [
+          "ops"
+        ],
+        "summary": "Observed, inferred, confirmed and actioned figures with definitions and denominators",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "Window, 1-90 days",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "case_ref",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one case",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/annotations": {
+      "post": {
+        "operationId": "postAnnotations",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Add a note (never changes evidence)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "object_type": {
+                    "type": "string",
+                    "enum": [
+                      "target",
+                      "attempt",
+                      "artifact",
+                      "identifier",
+                      "case"
+                    ]
+                  },
+                  "object_id": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string",
+                    "maxLength": 10000
+                  },
+                  "supersedes": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "object_type",
+                  "object_id",
+                  "body"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/artifacts/{id}/content": {
+      "get": {
+        "operationId": "getArtifactsIdContent",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Download an artifact after hash re-verification",
+        "description": "Restricted artifacts (cookies, session data) need an X-Purpose header and the evidence or admin role; access is audited.",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/attempts/{id}/first-image": {
+      "get": {
+        "operationId": "getAttemptsIdFirstImage",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "First validated viewport image of an attempt (served from the committed or staging copy, labelled)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/audit-events": {
+      "get": {
+        "operationId": "getAuditEvents",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Custody/audit events (auditors: all; others: per case)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "query",
+            "required": false,
+            "description": "Case scope (required unless auditor/admin)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_type",
+            "in": "query",
+            "required": false,
+            "description": "Object type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "query",
+            "required": false,
+            "description": "Object id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "postAuthLogin",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Password step of sign-in",
+        "description": "Returns `next` (mfa, enrol_mfa, change_password or null) and a CSRF token. Rate-limited per account and per client address; repeated failures lock the account.",
+        "security": [],
+        "x-auth-level": "none",
+        "x-roles": [],
+        "x-rate-bucket": "login",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "password": {
+                    "type": "string",
+                    "maxLength": 256
+                  }
+                },
+                "required": [
+                  "username",
+                  "password"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "postAuthLogout",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Revoke the current session",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "password",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "operationId": "getAuthMe",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Current user, roles, pending sign-in step and UI policy",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "password",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/mfa/confirm": {
+      "post": {
+        "operationId": "postAuthMfaConfirm",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Confirm TOTP enrolment with a code",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "password",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/mfa/enrol": {
+      "post": {
+        "operationId": "postAuthMfaEnrol",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Start TOTP enrolment (returns the secret and otpauth URI once)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "password",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/mfa/verify": {
+      "post": {
+        "operationId": "postAuthMfaVerify",
+        "tags": [
+          "auth"
+        ],
+        "summary": "TOTP step of sign-in (each time-step code is accepted once)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "password",
+        "x-roles": [],
+        "x-rate-bucket": "login",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password": {
+      "post": {
+        "operationId": "postAuthPassword",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Change password; other sessions are revoked",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "password",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "current_password": {
+                    "type": "string"
+                  },
+                  "new_password": {
+                    "type": "string",
+                    "minLength": 12
+                  }
+                },
+                "required": [
+                  "current_password",
+                  "new_password"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/sessions": {
+      "get": {
+        "operationId": "getAuthSessions",
+        "tags": [
+          "auth"
+        ],
+        "summary": "List my active sessions",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/captures/{id}/artifacts": {
+      "get": {
+        "operationId": "getCapturesIdArtifacts",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Artifact ledger rows of an attempt",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "description": "Artifact type filter",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/captures/{id}/manifest": {
+      "get": {
+        "operationId": "getCapturesIdManifest",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Manifest with ledger comparison and artifact ledger rows",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/captures/{id}/verify": {
+      "post": {
+        "operationId": "postCapturesIdVerify",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Verify Evidence for one attempt (hash every file, write a hashed report)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "evidence",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/cases": {
+      "get": {
+        "operationId": "getCases",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Cases visible to me (admins see all with masked references)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Reference or title search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "open or closed",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postCases",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Open a case (the creator becomes owner)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "admin",
+          "analyst",
+          "intake"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "case_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9/_.:-]+$",
+                    "maxLength": 120
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "financial_fraud",
+                      "phishing",
+                      "impersonation",
+                      "investment_scam",
+                      "loan_app",
+                      "job_task_scam",
+                      "sextortion",
+                      "other"
+                    ]
+                  },
+                  "sensitivity": {
+                    "type": "string",
+                    "enum": [
+                      "restricted",
+                      "confidential",
+                      "secret"
+                    ]
+                  },
+                  "owner_unit": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "ncrp_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "fir_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "case_ref",
+                  "title"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cases/{id}": {
+      "get": {
+        "operationId": "getCasesId",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Case detail: members, holds, job states",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchCasesId",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Edit, close or reopen a case (owner)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "expected_version": {
+                    "type": "integer"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "closed"
+                    ]
+                  },
+                  "ncrp_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "fir_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cases/{id}/hold": {
+      "post": {
+        "operationId": "postCasesIdHold",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Place a legal hold (blocks retention deletion)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 1000
+                  },
+                  "authority_ref": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cases/{id}/hold/release": {
+      "post": {
+        "operationId": "postCasesIdHoldRelease",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Release a legal hold",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cases/{id}/members": {
+      "post": {
+        "operationId": "postCasesIdMembers",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Add or change a member (owner)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "case_role": {
+                    "type": "string",
+                    "enum": [
+                      "owner",
+                      "investigator",
+                      "viewer"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3
+                  }
+                },
+                "required": [
+                  "username",
+                  "case_role",
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cases/{id}/members/{userId}": {
+      "delete": {
+        "operationId": "deleteCasesIdMembersUserId",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Remove a member (owner)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/cases/{id}/uploads": {
+      "post": {
+        "operationId": "postCasesIdUploads",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Upload a proof document (signed certificate, dispatch or receipt proof)",
+        "description": "Raw body; the content must match its declared type. Stored read-only and hashed.",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "evidence",
+          "report",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": true,
+            "description": "signed_certificate | dispatch_proof | receipt_proof | provider_acknowledgement | legal_authority | other",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "query",
+            "required": false,
+            "description": "Original file name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "note",
+            "in": "query",
+            "required": false,
+            "description": "Free-text note",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/pdf": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cases/{id}/verify": {
+      "post": {
+        "operationId": "postCasesIdVerify",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Verify Evidence for every attempt in a case",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "evidence",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/certificates": {
+      "get": {
+        "operationId": "getCertificates",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Worksheets in my cases",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one case (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postCertificates",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Prepare a Section 63 worksheet over verified records",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "evidence",
+          "approver"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "case_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "attempt_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "minItems": 1,
+                    "maxItems": 50
+                  },
+                  "part": {
+                    "type": "string",
+                    "enum": [
+                      "A",
+                      "B",
+                      "A_and_B"
+                    ]
+                  }
+                },
+                "required": [
+                  "case_id",
+                  "attempt_ids",
+                  "part"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/certificates/{id}": {
+      "get": {
+        "operationId": "getCertificatesId",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Worksheet with fields, gaps and template verification state",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/certificates/{id}/files/{kind}": {
+      "get": {
+        "operationId": "getCertificatesIdFilesKind",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Download fact-sheet, hash-report or the draft worksheet",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/certificates/{id}/transition": {
+      "post": {
+        "operationId": "postCertificatesIdTransition",
+        "tags": [
+          "actions"
+        ],
+        "summary": "complete, reopen, record_signed (upload), record_submission, withdraw",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "evidence",
+          "approver"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "complete",
+                      "reopen",
+                      "record_signed",
+                      "record_submission",
+                      "withdraw"
+                    ]
+                  },
+                  "upload_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "submission": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "authority": {
+                        "type": "string"
+                      },
+                      "reference": {
+                        "type": "string"
+                      },
+                      "submitted_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "authority",
+                      "reference",
+                      "submitted_at"
+                    ]
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/certificates/{id}/worksheet": {
+      "patch": {
+        "operationId": "patchCertificatesIdWorksheet",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Enter worksheet values or mark them unknown (a person must decide)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "evidence",
+          "approver"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "expected_version": {
+                    "type": "integer"
+                  },
+                  "edits": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "value": {},
+                        "marked_unknown": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "value"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "expected_version",
+                  "edits"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/custody/verify": {
+      "get": {
+        "operationId": "getCustodyVerify",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Recompute the hash chain of sealed audit events",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "auditor",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/decisions": {
+      "post": {
+        "operationId": "postDecisions",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Record an append-only analyst decision",
+        "description": "Uses expected_last_decision_id for concurrency. A false-positive/benign decision suppresses external actions until an approver overrides on newer evidence.",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "target_id": {
+                    "type": "integer"
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "retain",
+                      "investigate",
+                      "false_positive",
+                      "benign",
+                      "inconclusive",
+                      "recapture",
+                      "escalate_for_approval",
+                      "confirm_suspicious",
+                      "likely_malicious",
+                      "override_suppression"
+                    ]
+                  },
+                  "reason_code": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "new_evidence_attempt": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "expected_last_decision_id": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "case_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "target_id",
+                  "decision",
+                  "reason_code",
+                  "reason",
+                  "expected_last_decision_id"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/decisions/bulk": {
+      "post": {
+        "operationId": "postDecisionsBulk",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Bulk triage: one attributed decision per target (preview first)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "target_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "retain",
+                      "investigate",
+                      "inconclusive",
+                      "recapture",
+                      "false_positive",
+                      "benign"
+                    ]
+                  },
+                  "reason_code": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5
+                  },
+                  "confirm": {
+                    "const": true
+                  },
+                  "preview": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "target_ids",
+                  "decision",
+                  "reason_code",
+                  "reason",
+                  "confirm"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/entities": {
+      "get": {
+        "operationId": "getEntities",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Targets sharing an identifier value, within my scope",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "description": "Identifier field type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "value",
+            "in": "query",
+            "required": true,
+            "description": "Value, 3-500 characters",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "description": "exact (default) or contains",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "case_ref",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one case",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "ops"
+        ],
+        "summary": "Liveness of the API process and database",
+        "security": [],
+        "x-auth-level": "none",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/identifier-reviews": {
+      "post": {
+        "operationId": "postIdentifierReviews",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Review one extracted identifier (append-only)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "target_id": {
+                    "type": "integer"
+                  },
+                  "field_type": {
+                    "type": "string"
+                  },
+                  "value_key": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "unverified",
+                      "candidate",
+                      "corroborated",
+                      "rejected"
+                    ]
+                  },
+                  "corrected_value": {
+                    "type": "string"
+                  },
+                  "reason_code": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "required": [
+                  "target_id",
+                  "field_type",
+                  "value_key",
+                  "state",
+                  "reason_code",
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/intake-batches": {
+      "post": {
+        "operationId": "postIntakeBatches",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Submit URLs (CSV, JSONL, XLSX or text) to a case",
+        "description": "Requires an Idempotency-Key header unless dry_run=true. Each line gets an accepted/duplicate/rejected result.",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "intake",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "query",
+            "required": true,
+            "description": "Target case (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "Validate without creating jobs",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "description": "browser_evidence | data_triage",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "csv | jsonl | xlsx | text (else from Content-Type)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "urgent",
+            "in": "query",
+            "required": false,
+            "description": "Urgent priority (true/false)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "priority",
+            "in": "query",
+            "required": false,
+            "description": "Default priority for rows without one",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "capture_variant",
+            "in": "query",
+            "required": false,
+            "description": "desktop | mobile | both",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "retention_class",
+            "in": "query",
+            "required": false,
+            "description": "Default retention class (defaults to case_evidence)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "description": "Duplicate-suppression window key (defaults to today)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "query",
+            "required": false,
+            "description": "Original file name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lawful_basis",
+            "in": "query",
+            "required": false,
+            "description": "Recorded lawful basis",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorisation_ref",
+            "in": "query",
+            "required": false,
+            "description": "Authorisation reference",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/csv": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/x-ndjson": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/intake-batches/{id}": {
+      "get": {
+        "operationId": "getIntakeBatchesId",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Intake batch with per-line results",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs": {
+      "get": {
+        "operationId": "getJobs",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Jobs in my cases with the three separate status fields",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "case_ref",
+            "in": "query",
+            "required": false,
+            "description": "Filter by case reference",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "Processing state",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "description": "Acquisition outcome",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "description": "Analyst verdict",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "URL search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "top_level",
+            "in": "query",
+            "required": false,
+            "description": "Only top-level jobs",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}": {
+      "get": {
+        "operationId": "getJobsId",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job detail: attempts, progress stage, children",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/control": {
+      "post": {
+        "operationId": "postJobsIdControl",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Pause, resume or cancel a queued job",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "pause",
+                      "resume",
+                      "cancel"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3
+                  },
+                  "confirm": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "action",
+                  "reason",
+                  "confirm"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/recapture": {
+      "post": {
+        "operationId": "postJobsIdRecapture",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Create a new capture job for the same target (earlier evidence unchanged)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3
+                  },
+                  "capture_variant": {
+                    "type": "string",
+                    "enum": [
+                      "desktop",
+                      "mobile"
+                    ]
+                  },
+                  "urgent": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/events": {
+      "get": {
+        "operationId": "getJobsEvents",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Server-sent events: job progress and first-image availability",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "description": "Resume after this event time",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/legal-routes": {
+      "get": {
+        "operationId": "getLegalRoutes",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Legal routes, their required particulars and guardrails, and s.69A grounds",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "tags": [
+          "ops"
+        ],
+        "summary": "Prometheus metrics (bearer token or admin/auditor session)",
+        "security": [],
+        "x-auth-level": "none",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/monitoring/alerts": {
+      "get": {
+        "operationId": "getMonitoringAlerts",
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "Reappearance alerts (leads, not attribution)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/monitoring/alerts/{id}/acknowledge": {
+      "post": {
+        "operationId": "postMonitoringAlertsIdAcknowledge",
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "Acknowledge a reappearance alert",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/monitoring/rules": {
+      "get": {
+        "operationId": "getMonitoringRules",
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "Revisit schedules with latest outcome",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one case (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postMonitoringRules",
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "Schedule proportionate revisits of a target",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "target_id": {
+                    "type": "integer"
+                  },
+                  "case_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "interval_hours": {
+                    "type": "number"
+                  },
+                  "duration_days": {
+                    "type": "integer"
+                  },
+                  "capture_variant": {
+                    "type": "string",
+                    "enum": [
+                      "desktop",
+                      "mobile"
+                    ]
+                  },
+                  "notice_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "target_id",
+                  "case_id",
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/monitoring/rules/{id}/observations": {
+      "post": {
+        "operationId": "postMonitoringRulesIdObservations",
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "Record a reported removal or provider-confirmed suspension (with acknowledgement upload)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "outcome_class": {
+                    "type": "string",
+                    "enum": [
+                      "reported_removal",
+                      "provider_confirmed_suspension"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 5
+                  },
+                  "upload_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "outcome_class",
+                  "note"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/monitoring/rules/{id}/stop": {
+      "post": {
+        "operationId": "postMonitoringRulesIdStop",
+        "tags": [
+          "monitoring"
+        ],
+        "summary": "Stop revisits",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notices": {
+      "get": {
+        "operationId": "getNotices",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Notices in my cases",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to one case (UUID)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "Notice state",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postNotices",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Create a notice draft",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "case_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "route": {
+                    "type": "string"
+                  },
+                  "recipient": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "maxLength": 300
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "government_nodal",
+                          "intermediary",
+                          "registrar",
+                          "registry",
+                          "hosting_provider",
+                          "cdn",
+                          "app_distributor",
+                          "record_holder",
+                          "bank_or_psp",
+                          "investigating_officer"
+                        ]
+                      },
+                      "contact": {
+                        "type": "string"
+                      },
+                      "jurisdiction": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "kind"
+                    ]
+                  },
+                  "targets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_id": {
+                          "type": "integer"
+                        },
+                        "evidence_attempt_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "maxItems": 10
+                        },
+                        "legal_ground": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "target_id"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "reference_no": {
+                    "type": "string"
+                  },
+                  "language": {
+                    "type": "string",
+                    "enum": [
+                      "en",
+                      "hi",
+                      "en_hi"
+                    ]
+                  },
+                  "legal_basis": {
+                    "type": "string"
+                  },
+                  "authority_ref": {
+                    "type": "string"
+                  },
+                  "issuing_authority": {
+                    "type": "string"
+                  },
+                  "signatory_name": {
+                    "type": "string"
+                  },
+                  "signatory_designation": {
+                    "type": "string"
+                  },
+                  "jurisdiction": {
+                    "type": "string"
+                  },
+                  "facts_summary": {
+                    "type": "string"
+                  },
+                  "requested_action": {
+                    "type": "string"
+                  },
+                  "necessity_note": {
+                    "type": "string"
+                  },
+                  "proportionality_note": {
+                    "type": "string"
+                  },
+                  "lawful_deadline": {
+                    "type": "string"
+                  },
+                  "internal_followup_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Internal follow-up target; never a legal deadline."
+                  },
+                  "route_fields": {
+                    "type": "object",
+                    "description": "Route-specific particulars (see GET /api/v1/legal-routes)."
+                  }
+                },
+                "required": [
+                  "case_id",
+                  "route",
+                  "recipient",
+                  "targets"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notices/{id}": {
+      "get": {
+        "operationId": "getNoticesId",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Notice detail with eligibility checks, allowed transitions, events and report packs",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchNoticesId",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Edit a draft",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "expected_version": {
+                    "type": "integer"
+                  },
+                  "recipient": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "maxLength": 300
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "government_nodal",
+                          "intermediary",
+                          "registrar",
+                          "registry",
+                          "hosting_provider",
+                          "cdn",
+                          "app_distributor",
+                          "record_holder",
+                          "bank_or_psp",
+                          "investigating_officer"
+                        ]
+                      },
+                      "contact": {
+                        "type": "string"
+                      },
+                      "jurisdiction": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "kind"
+                    ]
+                  },
+                  "targets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "target_id": {
+                          "type": "integer"
+                        },
+                        "evidence_attempt_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "maxItems": 10
+                        },
+                        "legal_ground": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "target_id"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "reference_no": {
+                    "type": "string"
+                  },
+                  "language": {
+                    "type": "string",
+                    "enum": [
+                      "en",
+                      "hi",
+                      "en_hi"
+                    ]
+                  },
+                  "legal_basis": {
+                    "type": "string"
+                  },
+                  "authority_ref": {
+                    "type": "string"
+                  },
+                  "issuing_authority": {
+                    "type": "string"
+                  },
+                  "signatory_name": {
+                    "type": "string"
+                  },
+                  "signatory_designation": {
+                    "type": "string"
+                  },
+                  "jurisdiction": {
+                    "type": "string"
+                  },
+                  "facts_summary": {
+                    "type": "string"
+                  },
+                  "requested_action": {
+                    "type": "string"
+                  },
+                  "necessity_note": {
+                    "type": "string"
+                  },
+                  "proportionality_note": {
+                    "type": "string"
+                  },
+                  "lawful_deadline": {
+                    "type": "string"
+                  },
+                  "internal_followup_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Internal follow-up target; never a legal deadline."
+                  },
+                  "route_fields": {
+                    "type": "object",
+                    "description": "Route-specific particulars (see GET /api/v1/legal-routes)."
+                  }
+                },
+                "required": [
+                  "expected_version"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notices/{id}/reports/{reportId}/{file}": {
+      "get": {
+        "operationId": "getNoticesIdReportsReportIdFile",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Download a generated report file after hash re-verification",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/notices/{id}/transition": {
+      "post": {
+        "operationId": "postNoticesIdTransition",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Move a notice through its workflow",
+        "description": "submit, review_ok (not the author), return_to_draft, approve (approver, not the author), generate, record_issued (needs dispatch proof), record_acknowledged (needs receipt proof), record_outcome, close (verified_closed needs a fresh capture), withdraw, dispute. Nothing is ever sent by the system.",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "report",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "issued_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "issue_channel": {
+                    "type": "string"
+                  },
+                  "dispatch_upload_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "received_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "receipt_upload_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "complied",
+                      "partially_complied",
+                      "rejected",
+                      "no_response"
+                    ]
+                  },
+                  "target_statuses": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "close_as": {
+                    "type": "string",
+                    "enum": [
+                      "verified_closed",
+                      "escalated"
+                    ]
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/packages": {
+      "post": {
+        "operationId": "postPackages",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Prepare an evidence package (originals copied, index hashed)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "evidence",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "case_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "job_id": {
+                    "type": "integer"
+                  },
+                  "attempt_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "maxItems": 200
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 5
+                  },
+                  "include_restricted": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "case_id",
+                  "purpose"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/packages/{id}/archive": {
+      "get": {
+        "operationId": "getPackagesIdArchive",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Download a package as a ustar archive",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "evidence",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "application/x-tar": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/{id}/generate": {
+      "post": {
+        "operationId": "postReportsIdGenerate",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Generate the report pack of an approved notice (fails if content changed since approval)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "approver",
+          "report"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/{type}/preview": {
+      "post": {
+        "operationId": "postReportsTypePreview",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Preview a notice report (not saved, not sent)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "report",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "notice_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "markdown",
+                      "html",
+                      "json"
+                    ]
+                  }
+                },
+                "required": [
+                  "notice_id"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/review-queue": {
+      "get": {
+        "operationId": "getReviewQueue",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Review queues",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "queue",
+            "in": "query",
+            "required": false,
+            "description": "unreviewed | high_risk_unreviewed | manual_review | escalated | inconclusive",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/addressees": {
+      "get": {
+        "operationId": "getTargetsIdAddressees",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Suggested registrar/hosting/CDN contacts with source and confidence",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/enrich": {
+      "post": {
+        "operationId": "postTargetsIdEnrich",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Queue a DNS/TLS/RDAP enrichment refresh (through the gateway)",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/investigation": {
+      "get": {
+        "operationId": "getTargetsIdInvestigation",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Everything about one target: evidence, typed leads with provenance, risk, decisions, notices, monitoring",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/lookalikes": {
+      "get": {
+        "operationId": "getTargetsIdLookalikes",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Brand lookalike check against the configured official domains",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/related": {
+      "get": {
+        "operationId": "getTargetsIdRelated",
+        "tags": [
+          "investigation"
+        ],
+        "summary": "Related targets sharing strong identifiers, within my scope, with contradictions",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/templates": {
+      "get": {
+        "operationId": "getTemplates",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Section 63 Schedule template, fields and verification records",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/templates/{id}/verify": {
+      "post": {
+        "operationId": "postTemplatesIdVerify",
+        "tags": [
+          "actions"
+        ],
+        "summary": "Record that the Schedule template was checked against the official text",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "approver",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Csrf"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "source_reference": {
+                    "type": "string",
+                    "minLength": 10
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "confirm_checked_against_official_text": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "source_reference",
+                  "confirm_checked_against_official_text"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/{id}/content": {
+      "get": {
+        "operationId": "getUploadsIdContent",
+        "tags": [
+          "cases"
+        ],
+        "summary": "Download an upload after re-verifying its hash",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [
+          "analyst",
+          "approver",
+          "evidence",
+          "report",
+          "admin"
+        ],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/verification-runs/{id}/report": {
+      "get": {
+        "operationId": "getVerificationRunsIdReport",
+        "tags": [
+          "evidence"
+        ],
+        "summary": "Download a verification report",
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "x-auth-level": "full",
+        "x-roles": [],
+        "x-rate-bucket": "api",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "cwc_session",
+        "description": "HttpOnly, SameSite=Strict session cookie set by the sign-in steps."
+      }
+    },
+    "parameters": {
+      "Csrf": {
+        "name": "X-CSRF-Token",
+        "in": "header",
+        "required": true,
+        "description": "Token returned by sign-in and /auth/me.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "details": {}
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    }
+  }
+}
