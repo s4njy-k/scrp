@@ -5,6 +5,8 @@ import type { Pool } from '../../src/db/pool.js';
 import { importText } from '../../src/importer/importer.js';
 import { applyRetention } from '../../src/coordinator/retention.js';
 import { HttpTriageWorker } from '../../src/coordinator/httpTriageWorker.js';
+import { leaseNext } from '../../src/queue/queue.js';
+import { runLeasedAttempt } from '../../src/acquisition/attemptRunner.js';
 import { freshDb, hasDb, tempRoot, testPolicy } from '../helpers.js';
 
 const policy = testPolicy({ limits: { per_domain_delay_seconds: 0 } });
@@ -51,6 +53,36 @@ describe.skipIf(!hasDb)('retention honours every linked case hold (§15)', () =>
       await expect(stat(a.dir)).rejects.toThrow();
       const events = (await pool.query(`SELECT event_type FROM audit_events WHERE attempt_id = $1 ORDER BY id`, [a.id])).rows.map((r) => r.event_type);
       expect(events).toEqual(['attempt_deletion_started', 'attempt_artifacts_deleted']);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('waits for an abandoned capture to finish cleanup before finalising after the hard deadline', async () => {
+    const { root, cleanup } = await tempRoot();
+    try {
+      await importText(pool, policy, 'target,urgent\nhttps://slowcleanup.example.com/,true',
+        { defaultProfile: 'browser_evidence', windowKey: 'w', importedBy: 't', filename: 'h.csv', format: 'csv' });
+      const lease = (await leaseNext(pool, policy, { workerId: 'w', stages: ['browser_primary'], needsBrowserPermit: true, engine: 'chromium', adapter: 'playwright', vantage: 't' }))!;
+      lease.attemptSeconds = 0.2; // deadline almost immediately
+      const res = await runLeasedAttempt({
+        pool, policy, lease, artifactRoot: root, kind: 'browser', engine: 'chromium', adapter: 'playwright', vantage: 't', hardDeadlineGraceMs: 100,
+        // Ignores its deadline, then flushes a file straight into the attempt directory
+        // (as Playwright does with the HAR when the context finally closes).
+        capture: async ({ writer }) => {
+          await new Promise((r) => setTimeout(r, 3000));
+          await mkdir(join(writer.tmpDir, 'network'), { recursive: true });
+          await writeFile(join(writer.tmpDir, 'network', 'network.har'), '{"log":{}}');
+          throw new Error('late capture ended');
+        },
+      });
+      expect(res.decision).toMatchObject({ kind: 'continue' }); // infrastructure failure, budget allows a retry
+      const a = (await pool.query('SELECT status, artifact_dir, error FROM attempts WHERE id = $1', [lease.attemptId])).rows[0];
+      expect(a.status).toBe('interrupted');
+      expect(a.error).toMatch(/hard deadline/);
+      // The late flush landed before the rename, inside the final directory; tmp was not recreated.
+      expect((await stat(join(root, a.artifact_dir, 'network', 'network.har'))).isFile()).toBe(true);
+      await expect(stat(join(root, 'tmp', lease.attemptId))).rejects.toThrow();
     } finally {
       await cleanup();
     }

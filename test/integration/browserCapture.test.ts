@@ -142,6 +142,15 @@ describe.skipIf(!BROWSERS_AVAILABLE)('staged browser evidence capture (§9, §10
     expect(manifest.outcome).toBe('CONTENT_CAPTURED');
   });
 
+  it('never lets a popup response stand in for the captured page status', async () => {
+    const { r, manifest, dir } = await capture(direct, fixture.url('/opens-denied-popup'));
+    const events = (await readFile(join(dir, 'network/events.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { type: string; url?: string; status?: number });
+    expect(events.some((e) => e.type === 'response' && e.url?.endsWith('/denied') && e.status === 403)).toBe(true); // popup observed
+    expect(r.observation.status).toBe(200);
+    expect(manifest.outcome).toBe('CONTENT_CAPTURED');
+    expect(manifest.artifacts.filter((a) => a.type === 'raw_html').every((a) => !String(a.metadata?.url).endsWith('/denied'))).toBe(true);
+  });
+
   it('accepts a legitimately text-free page as complete evidence', async () => {
     const { manifest } = await capture(direct, fixture.url('/image-only'));
     const text = manifest.artifacts.find((a) => a.type === 'rendered_text');

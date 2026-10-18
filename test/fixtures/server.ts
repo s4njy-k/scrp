@@ -97,6 +97,16 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse, url: UR
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(html(`<p id="cookie">cookie=[${(q.headers.cookie ?? 'none').replace(/[<>&]/g, '')}]</p>`, 'Echo'));
   },
+  // Real content that opens a popup answering 403 (an ad/login window).
+  '/opens-denied-popup': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html(`<h1>Main content</h1><p>${'Visible target text. '.repeat(30)}</p><script>setTimeout(function(){ window.open('/popup-redirects-to-denied', '_blank'); }, 100);</script>`, 'Main'));
+  },
+  // Popup that loads, then navigates to a 403 (as ad/login popups do).
+  '/popup-redirects-to-denied': (_q, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(html('<p>popup</p><script>setTimeout(function(){ location.replace("/denied"); }, 100);</script>', 'Popup'));
+  },
   '/login': (_q, res) => {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(html('<h1>Sign in</h1><form action="/do-login"><input name="u"><input type="password" name="p"><button>Login</button></form>', 'Login'));

@@ -68,6 +68,8 @@ export class NetworkRecorder {
   readonly frames: { url: string; name: string; parentUrl: string | null; at: string }[] = [];
   readonly mainDocumentResponses: { url: string; status: number; headers: Record<string, string>; at: string }[] = [];
   readonly pages: Page[] = [];
+  /** The page being captured. Popups are recorded but never stand in for it. */
+  private primaryPage: Page | null = null;
   readonly console: string[] = [];
   rendererCrashed = false;
   private stopped = false;
@@ -111,7 +113,9 @@ export class NetworkRecorder {
     if (sw) return { service_worker: sw.url() };
     try {
       const f = req.frame();
-      return { frame_url: f.url(), main_frame: f.parentFrame() === null };
+      const main = f.parentFrame() === null;
+      // main_frame: top frame of ANY page (popups included); primary_page: that page is the captured one.
+      return { frame_url: f.url(), main_frame: main, ...(main ? { primary_page: f.page() === this.primaryPage } : {}) };
     } catch {
       return { frame_url: null, frame_unavailable: true };
     }
@@ -166,6 +170,9 @@ export class NetworkRecorder {
       }
     }
     this.pages.push(page);
+    // The context's first page is the captured page (the context 'page' event may
+    // deliver it before attachPage(page, false) runs); later pages are popups.
+    if (this.primaryPage === null) this.primaryPage = page;
     page.on('frameattached', (f) => {
       if (this.frames.length >= this.policy.bounds.max_frames_per_page * 4) return;
       this.frames.push({ url: f.url(), name: f.name(), parentUrl: f.parentFrame()?.url() ?? null, at: new Date().toISOString() });
@@ -219,7 +226,10 @@ export class NetworkRecorder {
     const req = res.request();
     const headers = res.headers();
     const info = this.frameInfo(req);
-    if (req.isNavigationRequest() && info.main_frame === true) {
+    // Only the captured page's own documents decide its status/headers; a popup's
+    // 401/403/429 must not be mistaken for the target's response.
+    const primaryDocument = req.isNavigationRequest() && info.main_frame === true && info.primary_page === true;
+    if (primaryDocument) {
       this.mainDocumentResponses.push({ url: res.url(), status: res.status(), headers, at: new Date().toISOString() });
     }
     const id = this.idFor(req);
@@ -237,7 +247,7 @@ export class NetworkRecorder {
         this.edges.push({ edgeType: 'redirect', fromUrl: res.url(), toUrl: new URL(headers.location, res.url()).href, contacted: false, observedAt: new Date().toISOString() });
       } catch { /* invalid location */ }
     }
-    this.maybeSaveBody(res, req, id, headers, req.isNavigationRequest() && info.main_frame === true);
+    this.maybeSaveBody(res, req, id, headers, primaryDocument);
   }
 
   private maybeSaveBody(res: Response, req: Request, id: number, headers: Record<string, string>, isMainDocument: boolean): void {

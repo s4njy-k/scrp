@@ -7,7 +7,7 @@ Status key:
 - **Needs VM**: can only be shown on the target machine. The procedure is given.
 
 Development verification ran on 2026-10-17: `npm test` gave 11 test files (6 unit, 5 integration) and
-132 tests passing; the Python contract tests gave 4 passing. The browser in those tests ran
+134 tests passing; the Python contract tests gave 4 passing. The browser in those tests ran
 in-process **without** the Chromium sandbox, because the development container runs as root.
 The hardened sandboxed engine still has to be verified on the VM.
 

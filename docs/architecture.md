@@ -56,8 +56,10 @@ import ──► QUEUED(stage=http | browser_primary)
 * **Deadlines**: every Playwright call in the capture is raced against the attempt deadline,
   because some calls, such as `page.screenshot` on a page stuck mid-navigation, can ignore
   their own timeout. As a backstop, `runLeasedAttempt` abandons a capture 20 s past its
-  deadline and records it as an infrastructure failure. A late capture cannot write any more,
-  because the attempt directory is sealed when finalisation starts.
+  deadline and records it as an infrastructure failure. Before finalising, it waits up to 30 s
+  for the abandoned capture's own bounded cleanup, because closing the context makes Playwright
+  flush the HAR straight into the attempt directory. After that, the directory is sealed against
+  late writes.
 * **Permits** (`global_permits`): there are two slots in total across every engine and adapter.
   At most one can be held by an alternate adapter, enforced under an advisory lock. Backoff and
   `429` deferrals give the slot back. They never sleep inside it.
@@ -121,6 +123,8 @@ artifacts.
   event with its reason.
 * `server_addr` is recorded with the note that, behind the gateway, it is the gateway's address,
   not the origin's.
+* Only documents loaded in the captured page's own top frame decide its status and headers.
+  Popups are recorded as popups, so a popup's 401/403/429 never stands in for the target's response.
 
 ## Artifact store and reconciliation (§12, §15)
 
