@@ -13,7 +13,9 @@ The hardened sandboxed engine still has to be verified on the VM.
 
 Re-run on 2026-10-18 after the v4 / v0.3 checklist work: `npm test` gave **22 test files (9 unit,
 13 integration including the browser smoke test of the console) and 182 tests passing**, and the
-Python contract tests gave 4 passing. Same environment and the same sandbox caveat.
+Python contract tests gave 4 passing. Same environment and the same sandbox caveat. After the
+cross-case isolation fixes from review: **23 files, 186 tests passing**
+(`cross-case.test.ts` added; its four tests fail on the previous code).
 
 | Check | Passing requirement | Evidence | Status |
 |---|---|---|---|

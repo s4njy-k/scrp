@@ -180,8 +180,18 @@ export function evidenceRoutes(d: RouteDeps): RouteSpec[] {
           include_restricted: z.boolean().default(false),
         }).strict(), ctx.body);
         const { caseRow } = await assertCaseAccess(d.pool, ctx.user!, b.case_id, 'investigator');
-        if (b.job_id) await assertJobAccess(d.pool, ctx.user!, b.job_id);
-        for (const a of b.attempt_ids ?? []) await assertAttemptAccess(d.pool, ctx.user!, a);
+        if (b.job_id) {
+          await assertJobAccess(d.pool, ctx.user!, b.job_id);
+          // The package is filed under this case, so its contents must belong to it: otherwise evidence
+          // from another case could be relabelled and reach members of this case only.
+          const linked = await d.pool.query('SELECT 1 FROM job_case_links WHERE job_id = $1 AND case_ref = $2', [b.job_id, caseRow.case_ref]);
+          if (!linked.rowCount) throw badRequest('evidence_not_in_case', `job ${b.job_id} is not linked to case ${caseRow.case_ref}`);
+        }
+        for (const a of b.attempt_ids ?? []) {
+          await assertAttemptAccess(d.pool, ctx.user!, a);
+          const linked = await d.pool.query('SELECT 1 FROM attempts a JOIN job_case_links l ON l.job_id = a.job_id WHERE a.id = $1 AND l.case_ref = $2', [a, caseRow.case_ref]);
+          if (!linked.rowCount) throw badRequest('evidence_not_in_case', `attempt ${a} is not linked to case ${caseRow.case_ref}`);
+        }
         const kind = b.attempt_ids ? 'attempts' : b.job_id ? 'job' : 'case';
         const id = b.attempt_ids ? b.attempt_ids.join(',') : b.job_id ? String(b.job_id) : caseRow.case_ref;
         try {

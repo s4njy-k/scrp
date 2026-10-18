@@ -207,11 +207,16 @@ export async function investigateView(main, targetId) {
         await guard(() => post('/api/v1/monitoring/rules', { target_id: Number(targetId), case_id: r.case_id, interval_hours: Number(r.interval), duration_days: Number(r.days), reason: r.reason }), 'Revisits scheduled (each creates a new capture)');
       } }, 'Schedule revisits') : null),
     h('div', { class: 'panel' }, h('h2', {}, 'Notes'),
-      d.annotations.length ? h('ul', { class: 'timeline' }, ...d.annotations.map((a) => h('li', { class: 'small' }, a.body, h('div', { class: 'muted' }, `${a.actor} · `, when(a.created_at))))) : h('p', { class: 'muted small' }, 'No notes. Notes never change evidence.'),
+      d.annotations.length ? h('ul', { class: 'timeline' }, ...d.annotations.map((a) => h('li', { class: 'small' }, a.body, h('div', { class: 'muted' }, `${a.actor}${a.case_ref ? ` · ${a.case_ref}` : ''} · `, when(a.created_at))))) : h('p', { class: 'muted small' }, 'No notes. Notes never change evidence.'),
       hasRole('analyst', 'approver') ? h('button', { type: 'button', onclick: async () => {
-        const r = await dialogForm('Add note', [{ name: 'body', label: 'Note', type: 'textarea', required: true }], 'Add');
+        // A note is visible only inside the case it is written for; ask when the target is in several.
+        const cases = d.case_refs.length > 1 ? (await get('/api/v1/cases?limit=200')).items.filter((c) => d.case_refs.includes(c.case_ref) && c.my_role !== 'viewer') : [];
+        const r = await dialogForm('Add note', [
+          ...(cases.length > 1 ? [{ name: 'case_id', label: 'Case (only its members will see the note)', type: 'select', options: cases.map((c) => ({ value: c.id, label: c.case_ref })) }] : []),
+          { name: 'body', label: 'Note', type: 'textarea', required: true },
+        ], 'Add');
         if (!r) return;
-        await guard(() => post('/api/v1/annotations', { object_type: 'target', object_id: String(targetId), body: r.body }), 'Note added');
+        await guard(() => post('/api/v1/annotations', { object_type: 'target', object_id: String(targetId), body: r.body, ...(r.case_id ? { case_id: r.case_id } : cases.length === 1 ? { case_id: cases[0].id } : {}) }), 'Note added');
         void investigateView(main, targetId);
       } }, 'Add note') : null),
     h('div', { class: 'panel' }, h('h2', {}, 'Infrastructure facts'), d.enrichment.length ? kv(d.enrichment.map((e) => [`${e.source} (${e.subject})`, `${e.status} · ${new Date(e.retrieved_at).toLocaleString()}${e.error ? ` · ${e.error}` : ''}`])) : h('p', { class: 'muted small' }, 'Not enriched yet.')));

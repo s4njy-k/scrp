@@ -74,6 +74,12 @@ Item-by-item status, with code and test references: [`docs/checklist-v0.3-status
 
 ### Security
 
+- Case isolation for targets shared by several cases (review findings on PR #3): evidence packages
+  accept only jobs or attempts linked to the case they are filed under; notes and monitoring rules
+  are shown only to members of their case; revisits are built from, and linked only to, the
+  monitoring rule's case; a notice closes as verified only after a fresh capture of every
+  non-withdrawn target within its case; monitoring rules are unique per target and case, with the
+  daily revisit cap still applied per target across all cases.
 - Raw captured HTML is never rendered. Downloads are attachments with a sandbox CSP and are
   re-hashed before they are served.
 - Governance safeguards (no autosend, no auto-takedown, no autosign, maker-checker) are schema
@@ -82,7 +88,7 @@ Item-by-item status, with code and test references: [`docs/checklist-v0.3-status
 ### Migrations
 
 `0003_evidence_integrity`, `0004_access_and_cases`, `0005_investigation`, `0006_actions`,
-`0007_monitoring_enrichment`, `0008_action_details`. All are additive. Take a verified backup
+`0007_monitoring_enrichment`, `0008_action_details`, `0009_monitoring_rule_per_case`. All are additive (0009 only narrows a unique index from per-target to per-target-and-case). Take a verified backup
 first (`docs/recovery-and-backup.md`). Rollback: [`docs/rollback.md`](docs/rollback.md).
 
 ## 2026-10-18 — PR review fixes

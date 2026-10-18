@@ -644,12 +644,20 @@ export function actionRoutes(d: RouteDeps): RouteSpec[] {
       if (b.action === 'close') {
         if (!b.close_as) throw badRequest('close_as_required', 'close as verified_closed or escalated');
         if (b.close_as === 'verified_closed') {
-          const fresh = await client.query(
-            `SELECT 1 FROM notice_targets nt JOIN jobs j ON j.target_id = nt.target_id JOIN attempts a ON a.job_id = j.id
-              WHERE nt.notice_id = $1 AND a.started_at > COALESCE($2::timestamptz, now() - interval '100 years') AND a.status IN ('committed', 'recovered') LIMIT 1`,
-            [id, locked.issued_at],
-          );
-          if (!fresh.rowCount) throw conflict('verification_capture_required', 'closing as verified needs at least one fresh capture after issuance (schedule a monitoring revisit)');
+          const unverified = (await client.query<{ target_id: number; url: string }>(
+            `SELECT nt.target_id, t.url FROM notice_targets nt JOIN targets t ON t.id = nt.target_id
+              WHERE nt.notice_id = $1 AND nt.target_status <> 'withdrawn'
+                AND NOT EXISTS (
+                  SELECT 1 FROM jobs j JOIN job_case_links l ON l.job_id = j.id JOIN attempts a ON a.job_id = j.id
+                   WHERE j.target_id = nt.target_id AND l.case_ref = $3 AND a.status IN ('committed', 'recovered') AND a.artifact_dir IS NOT NULL
+                     AND a.started_at > COALESCE($2::timestamptz, now() - interval '100 years'))
+              ORDER BY nt.target_id`,
+            [id, locked.issued_at, caseRow.case_ref],
+          )).rows;
+          if (unverified.length) {
+            throw conflict('verification_capture_required', 'closing as verified needs a fresh capture of every target in this case after issuance (schedule monitoring revisits)',
+              { targets: unverified });
+          }
         }
         to = b.close_as;
       }

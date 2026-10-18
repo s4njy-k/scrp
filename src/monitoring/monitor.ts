@@ -30,36 +30,47 @@ export async function scheduleDueRevisits(pool: Pool, policy: Policy): Promise<{
   const admission = await readAdmission(pool);
   if (admission.paused || admission.low_priority_paused) return { created: 0, skipped_reason: `admission paused: ${admission.reasons.join('; ')}` };
   await pool.query(`UPDATE monitoring_rules SET active = false, stopped_by = 'monitor:expired', stopped_at = now() WHERE active AND ends_at <= now()`);
-  const { rows } = await pool.query<{ id: string; target_id: number; interval_hours: string; max_per_day: number; capture_variant: string }>(
-    `SELECT id, target_id, interval_hours, max_per_day, capture_variant FROM monitoring_rules WHERE active AND next_due_at <= now() ORDER BY next_due_at LIMIT 50`,
+  const { rows } = await pool.query<{ id: string; target_id: number; interval_hours: string; max_per_day: number; capture_variant: string; case_ref: string }>(
+    `SELECT r.id, r.target_id, r.interval_hours, r.max_per_day, r.capture_variant, c.case_ref
+       FROM monitoring_rules r JOIN cases c ON c.id = r.case_id WHERE r.active AND r.next_due_at <= now() ORDER BY r.next_due_at LIMIT 50`,
   );
   let created = 0;
   for (const r of rows) {
     await withTransaction(pool, async (client) => {
       const locked = await client.query('SELECT 1 FROM monitoring_rules WHERE id = $1 AND active AND next_due_at <= now() FOR UPDATE SKIP LOCKED', [r.id]);
       if (!locked.rowCount) return;
-      const today = (await client.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM jobs WHERE scope->>'monitoring_rule_id' = $1 AND created_at > now() - interval '24 hours'`, [r.id],
-      )).rows[0]!.n;
-      const cap = Math.min(r.max_per_day, policy.monitoring.max_auto_revisits_per_target_per_day);
-      if (today >= cap) {
+      // Per rule, and per target across every case's rules: several cases must not multiply visits to the site.
+      const today = (await client.query<{ rule: number; target: number }>(
+        `SELECT count(*) FILTER (WHERE scope->>'monitoring_rule_id' = $1)::int AS rule, count(*)::int AS target
+           FROM jobs WHERE target_id = $2 AND scope ? 'monitoring_rule_id' AND created_at > now() - interval '24 hours'`, [r.id, r.target_id],
+      )).rows[0]!;
+      if (today.rule >= r.max_per_day || today.target >= policy.monitoring.max_auto_revisits_per_target_per_day) {
         await client.query(`UPDATE monitoring_rules SET next_due_at = now() + interval '1 hour' WHERE id = $1`, [r.id]);
         return;
       }
-      const base = (await client.query<{ id: number }>(`SELECT id FROM jobs WHERE target_id = $1 AND parent_job_id IS NULL ORDER BY created_at DESC LIMIT 1`, [r.target_id])).rows[0];
+      // The same target can be in several cases: copy settings from a job of the rule's own case, and
+      // link the revisit (case_ref and sources) to that case only.
+      const base = (await client.query<{ id: number }>(
+        `SELECT j.id FROM jobs j WHERE j.target_id = $1 AND j.parent_job_id IS NULL
+            AND EXISTS (SELECT 1 FROM job_case_links l WHERE l.job_id = j.id AND l.case_ref = $2)
+          ORDER BY j.created_at DESC LIMIT 1`, [r.target_id, r.case_ref],
+      )).rows[0];
       if (!base) return;
       const ins = await client.query<{ id: number }>(
         `INSERT INTO jobs (target_id, profile, window_key, registrable_domain, priority, urgent, required_artifacts, capture_variant, scope, allowed_interactions, retention_class, case_ref, stage)
          SELECT target_id, profile, $2, registrable_domain, $3, false, required_artifacts, $4,
-                jsonb_build_object('monitoring_rule_id', $5::text, 'requeued_from_job', id, 'child_pages_max', 0), allowed_interactions, retention_class, case_ref,
+                jsonb_build_object('monitoring_rule_id', $5::text, 'requeued_from_job', id, 'child_pages_max', 0), allowed_interactions, retention_class, $6::text,
                 CASE WHEN profile = 'data_triage' THEN 'http'::job_stage ELSE 'browser_primary'::job_stage END
            FROM jobs WHERE id = $1
          ON CONFLICT (target_id, profile, capture_variant, window_key) WHERE parent_job_id IS NULL DO NOTHING RETURNING id`,
-        [base.id, `monitor:${r.id}:${new Date().toISOString()}`, policy.monitoring.revisit_priority, r.capture_variant, r.id],
+        [base.id, `monitor:${r.id}:${new Date().toISOString()}`, policy.monitoring.revisit_priority, r.capture_variant, r.id, r.case_ref],
       );
       const jobId = ins.rows[0]?.id;
       if (!jobId) return;
-      await client.query('INSERT INTO job_sources (job_id, source_record_id) SELECT $2, source_record_id FROM job_sources WHERE job_id = $1 ON CONFLICT DO NOTHING', [base.id, jobId]);
+      await client.query(
+        `INSERT INTO job_sources (job_id, source_record_id)
+         SELECT $2, js.source_record_id FROM job_sources js JOIN source_records s ON s.id = js.source_record_id
+          WHERE js.job_id = $1 AND s.case_ref = $3 ON CONFLICT DO NOTHING`, [base.id, jobId, r.case_ref]);
       await client.query(
         `UPDATE monitoring_rules SET next_due_at = now() + make_interval(secs => $2::numeric * 3600), revisits = revisits + 1, last_job_id = $3 WHERE id = $1`,
         [r.id, r.interval_hours, jobId],

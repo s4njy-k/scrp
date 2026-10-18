@@ -40,7 +40,7 @@ export function monitoringRoutes(d: RouteDeps): RouteSpec[] {
              b.capture_variant, b.reason, ctx.user!.username, b.duration_days],
           );
         } catch (err) {
-          if ((err as { code?: string }).code === '23505') throw conflict('rule_exists', 'an active monitoring rule already exists for this target and profile');
+          if ((err as { code?: string }).code === '23505') throw conflict('rule_exists', 'an active monitoring rule already exists for this target and profile in this case');
           throw err;
         }
         await auditCtx(d.pool, ctx, 'monitoring_rule_created', { target_id: b.target_id, interval_hours: b.interval_hours, duration_days: b.duration_days, reason: b.reason },

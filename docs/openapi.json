@@ -524,6 +524,7 @@
           "investigation"
         ],
         "summary": "Add a note (never changes evidence)",
+        "description": "The note is visible only to members of its case. Give case_id when the object is in several of your cases.",
         "security": [
           {
             "session": []
@@ -598,6 +599,10 @@
                   },
                   "supersedes": {
                     "type": "integer"
+                  },
+                  "case_id": {
+                    "type": "string",
+                    "format": "uuid"
                   }
                 },
                 "required": [
@@ -5337,6 +5342,7 @@
           "evidence"
         ],
         "summary": "Prepare an evidence package (originals copied, index hashed)",
+        "description": "The job or attempts must be linked to the given case.",
         "security": [
           {
             "session": []

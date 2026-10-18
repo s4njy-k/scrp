@@ -128,9 +128,16 @@ export function investigateRoutes(d: RouteDeps): RouteSpec[] {
         const monitoring = (await d.pool.query(
           `SELECT r.id, r.interval_hours, r.active, r.next_due_at, r.ends_at, r.revisits, r.reason, r.capture_variant,
                   (SELECT jsonb_agg(o ORDER BY o.id DESC) FROM (SELECT id, outcome_class, differences, created_at, job_id FROM monitoring_observations WHERE rule_id = r.id ORDER BY id DESC LIMIT 10) o) AS observations
-             FROM monitoring_rules r WHERE r.target_id = $1 ORDER BY r.created_at DESC`, [targetId],
+             FROM monitoring_rules r
+            WHERE r.target_id = $1 AND ($3::boolean OR EXISTS (SELECT 1 FROM case_members m WHERE m.case_id = r.case_id AND m.user_id = $2))
+            ORDER BY r.created_at DESC`, [targetId, ctx.user!.id, seesAllCases(ctx.user!)],
         )).rows;
-        const annotations = (await d.pool.query(`SELECT id, body, actor, created_at, supersedes FROM annotations WHERE object_type = 'target' AND object_id = $1 ORDER BY id DESC LIMIT 50`, [String(targetId)])).rows;
+        const annotations = (await d.pool.query(
+          `SELECT a.id, a.body, a.actor, a.created_at, a.supersedes, c.case_ref FROM annotations a LEFT JOIN cases c ON c.id = a.case_id
+            WHERE a.object_type = 'target' AND a.object_id = $1
+              AND ($3::boolean OR EXISTS (SELECT 1 FROM case_members m WHERE m.case_id = a.case_id AND m.user_id = $2))
+            ORDER BY a.id DESC LIMIT 50`, [String(targetId), ctx.user!.id, seesAllCases(ctx.user!)],
+        )).rows;
         const caseRefs = (await d.pool.query<{ case_ref: string }>('SELECT DISTINCT case_ref FROM job_case_links WHERE job_id = ANY($1::bigint[]) ORDER BY 1', [jobIds])).rows.map((r) => r.case_ref);
         await auditCtx(d.pool, ctx, 'investigation_viewed', { jobs: jobIds.length }, { objectType: 'target', objectId: targetId, caseRef: caseRefs[0] ?? null });
         return {
@@ -335,22 +342,48 @@ export function investigateRoutes(d: RouteDeps): RouteSpec[] {
           object_id: z.string().min(1).max(200),
           body: z.string().trim().min(1).max(10000),
           supersedes: z.number().int().positive().optional(),
+          case_id: z.string().uuid().optional(),
         }).strict(), ctx.body);
-        if (b.object_type === 'target') await assertTargetAccess(d.pool, ctx.user!, requireIntId(b.object_id), 'investigator');
-        else if (b.object_type === 'attempt') await assertAttemptAccess(d.pool, ctx.user!, b.object_id, 'investigator');
-        else if (b.object_type === 'case') {
+        let jobScope: { sql: string; param: unknown } | null = null;
+        if (b.object_type === 'target') {
+          await assertTargetAccess(d.pool, ctx.user!, requireIntId(b.object_id), 'investigator');
+          jobScope = { sql: 'SELECT id FROM jobs WHERE target_id = $1', param: requireIntId(b.object_id) };
+        } else if (b.object_type === 'attempt') {
+          await assertAttemptAccess(d.pool, ctx.user!, b.object_id, 'investigator');
+          jobScope = { sql: 'SELECT job_id FROM attempts WHERE id = $1', param: b.object_id };
+        } else if (b.object_type === 'case') {
           const { assertCaseAccess } = await import('../authz.js');
           await assertCaseAccess(d.pool, ctx.user!, b.object_id, 'investigator');
+          if (b.case_id && b.case_id !== b.object_id) throw badRequest('case_mismatch', 'a case note belongs to that case');
         } else if (b.object_type === 'artifact') {
           const a = (await d.pool.query<{ attempt_id: string }>('SELECT attempt_id FROM artifacts WHERE id = $1', [requireIntId(b.object_id)])).rows[0];
           if (!a) throw badRequest('unknown_object', 'artifact not found');
           await assertAttemptAccess(d.pool, ctx.user!, a.attempt_id, 'investigator');
+          jobScope = { sql: 'SELECT job_id FROM attempts WHERE id = $1', param: a.attempt_id };
         } else throw badRequest('unsupported_object', 'annotate identifiers through their target');
+        // A note is visible only within the case it was written in, because the same target can be in several cases.
+        let caseId = b.object_type === 'case' ? b.object_id : null;
+        let caseRef: string | null = null;
+        if (jobScope) {
+          const candidates = (await d.pool.query<{ id: string; case_ref: string }>(
+            `SELECT DISTINCT c.id, c.case_ref FROM job_case_links l JOIN cases c ON c.case_ref = l.case_ref
+              WHERE l.job_id IN (${jobScope.sql})
+                AND ($2::boolean OR EXISTS (SELECT 1 FROM case_members m WHERE m.case_id = c.id AND m.user_id = $3 AND m.case_role IN ('owner', 'investigator')))`,
+            [jobScope.param, seesAllCases(ctx.user!), ctx.user!.id],
+          )).rows;
+          const chosen = b.case_id ? candidates.find((c) => c.id === b.case_id) : candidates.length === 1 ? candidates[0] : undefined;
+          if (!chosen) {
+            throw badRequest(b.case_id ? 'case_mismatch' : 'case_required', b.case_id ? 'the object is not in that case, or you do not investigate it' : 'this object is in several of your cases: give case_id',
+              { cases: candidates.map((c) => ({ id: c.id, case_ref: c.case_ref })) });
+          }
+          caseId = chosen.id;
+          caseRef = chosen.case_ref;
+        }
         const r = await d.pool.query<{ id: number }>(
-          'INSERT INTO annotations (object_type, object_id, body, supersedes, actor, actor_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
-          [b.object_type, b.object_id, b.body, b.supersedes ?? null, ctx.user!.username, ctx.user!.id],
+          'INSERT INTO annotations (object_type, object_id, case_id, body, supersedes, actor, actor_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+          [b.object_type, b.object_id, caseId, b.body, b.supersedes ?? null, ctx.user!.username, ctx.user!.id],
         );
-        await auditCtx(d.pool, ctx, 'annotation_added', { object_type: b.object_type, supersedes: b.supersedes ?? null }, { objectType: b.object_type, objectId: b.object_id });
+        await auditCtx(d.pool, ctx, 'annotation_added', { object_type: b.object_type, supersedes: b.supersedes ?? null }, { objectType: b.object_type, objectId: b.object_id, caseRef });
         return reply(201, { annotation_id: r.rows[0]!.id });
       },
     },
