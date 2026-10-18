@@ -77,6 +77,27 @@ export async function investigateView(main, targetId) {
     h('table', {}, h('tbody', {}, ...d.contacted_hosts.map((c) => h('tr', {}, h('td', { class: 'mono small' }, c.to_host), h('td', { class: 'small right' }, c.requests)))))) : null);
   if (d.images[0]) showImage(d.images.find((i) => i.artifact_type === 'screenshot_settled') ?? d.images[0]);
 
+  // Side-by-side comparison of original viewport images across time, profiles and vantages (sources unaltered).
+  const comparable = d.timeline.filter((t) => t.kind === 'browser' && t.manifest_sha256 && !t.deleted_at);
+  if (comparable.length >= 2) {
+    const labelOf = (t) => `${new Date(t.started_at).toISOString().slice(0, 16).replace('T', ' ')} UTC · ${t.capture_variant} · ${t.vantage ?? ''} · ${(t.outcome ?? t.status).toLowerCase()}`;
+    const pick = (i) => h('select', {}, ...comparable.map((t, j) => h('option', { value: t.id, selected: j === i }, labelOf(t))));
+    const a = pick(comparable.length - 1);
+    const b = pick(0);
+    const panes = h('div', { class: 'compare' });
+    const render = () => clear(panes, ...[a, b].map((sel) => {
+      const t = comparable.find((x) => x.id === sel.value);
+      return h('figure', {}, authImage(`/api/v1/attempts/${t.id}/first-image`, `Viewport of attempt ${t.id.slice(0, 8)}`),
+        h('figcaption', { class: 'small' }, labelOf(t), t.final_url ? h('div', { class: 'mono' }, t.final_url) : null, h('a', { href: `#/evidence/${t.id}` }, 'evidence record')));
+    }));
+    a.addEventListener('change', render);
+    b.addEventListener('change', render);
+    left.append(h('div', { class: 'panel' }, h('h2', {}, 'Compare captures'),
+      h('p', { class: 'small muted' }, 'Original viewport images side by side. Differences in time, device profile or vantage are shown, not interpreted; a mobile user agent is not a mobile-network vantage.'),
+      h('div', { class: 'row' }, field('Earlier', a), field('Later', b)), panes));
+    render();
+  }
+
   // ---- Centre: leads with provenance
   const signalTypes = new Set(['analytics_id', 'adsense_id', 'chat_widget_id', 'dom_template_hash', 'brand_claim', 'business_identity', 'fraud_claim_text', 'api_endpoint']);
   const leads = d.identifiers.filter((i) => !signalTypes.has(i.field_type));

@@ -136,3 +136,6 @@ ul.checks li.warn .mark { color: var(--warn); }
 table.bars td.barcell { width: 40%; }
 table.bars .bar { display: block; height: 10px; background: var(--accent); border-radius: 4px; min-width: 2px; }
 @media (max-width: 700px) { .targetpick { grid-template-columns: 1fr; } }
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.compare figure { margin: 0; }
+.compare img { width: 100%; border: 1px solid var(--line); border-radius: 6px; }

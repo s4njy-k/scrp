@@ -53,6 +53,10 @@ describe.skipIf(!hasDb || !BROWSERS_AVAILABLE)('analyst console in a browser', (
     for (let i = 0; i < 3; i += 1) await worker.runOne();
     for (let a = await claimNextExtraction(pool); a; a = await claimNextExtraction(pool)) await runExtraction(pool, policy, root, a);
     targetId = Number((await pool.query('SELECT id FROM targets WHERE url = $1', [fixture.url('/static')])).rows[0].id);
+    // A second capture of the same target (mobile profile) for the side-by-side comparison.
+    const jobId = Number((await pool.query('SELECT id FROM jobs WHERE target_id = $1 ORDER BY id LIMIT 1', [targetId])).rows[0].id);
+    expect((await setup.post(`/api/v1/jobs/${jobId}/recapture`, { reason: 'mobile comparison', capture_variant: 'mobile', urgent: true })).status).toBe(202);
+    for (let i = 0; i < 3; i += 1) await worker.runOne();
     attemptId = (await pool.query(`SELECT a.id FROM attempts a JOIN jobs j ON j.id = a.job_id WHERE j.target_id = $1 AND a.kind = 'browser' AND a.status = 'committed' LIMIT 1`, [targetId])).rows[0].id;
     const decided = await setup.post('/api/v1/decisions', { target_id: targetId, decision: 'confirm_suspicious', reason_code: 'payment_redirection', reason: 'Page asks for a refund fee by UPI', expected_last_decision_id: null });
     expect(decided.status).toBe(201);
@@ -110,6 +114,10 @@ describe.skipIf(!hasDb || !BROWSERS_AVAILABLE)('analyst console in a browser', (
     await visit(`#/cases/${caseId}`, /UI-CASE-1/);
     await visit(`#/investigate/${targetId}`, /.+/);
     expect(await page.locator('#main .chips').first().textContent()).toContain('suspicious');
+    await page.locator('.compare figure').nth(1).waitFor();
+    await page.locator('.compare').scrollIntoViewIfNeeded(); // images load lazily when visible
+    await page.waitForFunction(() => [...document.querySelectorAll('.compare img')].every((i) => (i as HTMLImageElement).naturalWidth > 0), undefined, { timeout: 15_000 });
+    expect(await page.locator('.compare figcaption').allTextContents()).toEqual([expect.stringContaining('desktop'), expect.stringContaining('mobile')]);
     await visit(`#/evidence/${attemptId}`, /Evidence record/);
     expect(await page.locator('.banner.info').first().textContent()).toContain('match');
     await visit('#/reports', /Reports and notices/);
